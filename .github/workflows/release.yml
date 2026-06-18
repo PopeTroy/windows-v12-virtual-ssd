@@ -1,0 +1,28 @@
+name: Compile Standalone Executable
+
+on:
+  release:
+    types: [published]
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+    - name: Checkout Code Matrix
+      uses: actions/checkout@v4
+
+    - name: Setup .NET Environment
+      uses: actions/setup-dotnet@v4
+      with:
+        dotnet-version: '8.0.x'
+
+    - name: Run Production Compiler
+      run: dotnet publish SovereignSSD.csproj -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -o ./build
+
+    - name: Upload Binary Asset to Release Channel
+      uses: softprops/action-gh-release@v2
+      with:
+        files: ./build/SovereignSSD.exe
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
