@@ -17,8 +17,26 @@ jobs:
       with:
         dotnet-version: '8.0.x'
 
+    - name: Debug Directory Mapping
+      run: |
+        echo "=== Current Working Directory File Map ==="
+        dir
+        echo "=========================================="
+
     - name: Run Production Compiler
-      run: dotnet publish *.csproj -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -o ./build
+      run: |
+        # Recursively search for any .csproj file in the repository layout
+        $projectFile = Get-ChildItem -Filter *.csproj -Recurse | Select-Object -First 1
+        
+        if ($null -eq $projectFile) {
+            Write-Error "CRITICAL ERROR: No project deployment file ending in .csproj found anywhere in this repository!"
+            exit 1
+        }
+        
+        Write-Host "Found project matrix file at: $($projectFile.FullName)"
+        
+        # Execute the absolute-pathed single file compilation sequence
+        dotnet publish $projectFile.FullName -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -o ./build
 
     - name: Upload Binary Asset to Release Channel
       uses: softprops/action-gh-release@v2
