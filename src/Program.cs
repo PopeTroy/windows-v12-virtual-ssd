@@ -1,7 +1,7 @@
 using System;
 using System.Diagnostics;
 using System.IO;
-using System.Management; // Requires adding System.Management via NuGet
+using System.Management; // Pulled via NuGet Reference
 using System.Net.Http;
 using System.Text;
 using System.Text.Json;
@@ -132,9 +132,9 @@ namespace SovereignEngine
                 using (Process p = Process.Start(psi)!) { p.WaitForExit(); }
                 File.Delete(scriptPath);
 
-                // Force filesystem flags to compress physical link vectors to zero bytes
-                using (Process p1 = Process.Start(new ProcessStartInfo { FileName = "fsutil.exe", Arguments = $"sparse setflag {driveLetter}:\\", CreateNoWindow = true, UseShellExecute = false })!) { p1.ViewportFile = null; p1.WaitForExit(); }
-                using (Process p2 = Process.Start(new ProcessStartInfo { FileName = "cmd.exe", Arguments = $"/c compact /c /s /exe:lzx {driveLetter}:\\*", CreateNoWindow = true, UseShellExecute = false })!) { p2.WaitForExit(); }
+                // Force filesystem flags to compress physical link vectors to zero bytes safely
+                using (Process p1 = Process.Start(new ProcessStartInfo { FileName = "fsutil.exe", Arguments = $"sparse setflag {driveLetter}:\\", CreateNoWindow = true, UseShellExecute = false })!) { p1?.WaitForExit(); }
+                using (Process p2 = Process.Start(new ProcessStartInfo { FileName = "cmd.exe", Arguments = $"/c compact /c /s /exe:lzx {driveLetter}:\\*", CreateNoWindow = true, UseShellExecute = false })!) { p2?.WaitForExit(); }
             }
             catch
             {
