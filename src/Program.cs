@@ -1,7 +1,6 @@
 using System;
 using System.Diagnostics;
 using System.IO;
-using System.Management; // Pulled via NuGet Reference
 using System.Net.Http;
 using System.Text;
 using System.Text.Json;
@@ -20,12 +19,12 @@ namespace SovereignEngine
         {
             Console.ForegroundColor = ConsoleColor.Cyan;
             Console.WriteLine("=========================================================================");
-            Console.WriteLine("   UESP SOVEREIGN v6.0.0 - CLOUD SHINOBI INTERFACE (ZERO AI)             ");
+            Console.WriteLine("   UESP SOVEREIGN v6.0.0 - CLOUD SHINOBI CONTROLLER (ZERO ASSEMBLE)      ");
             Console.WriteLine("=========================================================================");
             Console.ResetColor();
 
             string vhdxPath = @"C:\Sovereign_ZeroState_SSD.vhdx";
-            int capacityGB = 2048; // Materialize a 2TB workspace grid
+            int capacityGB = 2048; // Materialize our 2TB virtual space
 
             try
             {
@@ -34,8 +33,8 @@ namespace SovereignEngine
                 Console.WriteLine("\n[-] Activating Byakugan Vision: Provisioning virtual cloud gateway...");
                 MountCloudBubbleInterface(vhdxPath, capacityGB);
 
-                // PHASE 2: EVALUATE ENVIRONMENT CHAKRA STABILITY
-                MonitorChakraReserves();
+                // PHASE 2: EVALUATE ENVIRONMENT CHAKRA STABILITY VIA NATIVE CLI
+                QueryNativeBatteryMetrics();
                 TriggerThermalFanSurge();
 
                 // PHASE 3: OPEN THE SHARINGAN WATCHER ENGINE
@@ -66,7 +65,6 @@ namespace SovereignEngine
             }
         }
 
-        // Cloud Interposer Loop: Tracks assets flowing out of local space into the cloud bubble
         private static async Task OnCloudSyncTriggeredAsync(FileSystemEventArgs e)
         {
             Console.ForegroundColor = ConsoleColor.Yellow;
@@ -75,15 +73,13 @@ namespace SovereignEngine
 
             try
             {
-                // Preemptively spin up active cooling loops to safeguard your system chips
                 TriggerThermalFanSurge();
 
-                // Cushion Delay: Gives mechanical 200GB HDD head time to stabilize sector writing locks
+                // Cushion Delay: Gives mechanical 200GB HDD head time to stabilize sector locks
                 await Task.Delay(400).ConfigureAwait(false);
 
                 if (!File.Exists(e.FullPath)) return;
 
-                // Build a thread-safe payload mapping pointing back to your memory-cached file tracking
                 var payloadData = new
                 {
                     filename = Path.GetFileName(e.FullPath),
@@ -93,7 +89,6 @@ namespace SovereignEngine
                 string serializedJson = JsonSerializer.Serialize(payloadData);
                 HttpContent httpContent = new StringContent(serializedJson, Encoding.UTF8, "application/json");
 
-                // Hand off data parameters via high-speed local loopback port to Puter.js daemon
                 HttpResponseMessage response = await localNodeClient.PostAsync(nodeEndpoint, httpContent).ConfigureAwait(false);
                 
                 if (response.IsSuccessStatusCode)
@@ -110,7 +105,7 @@ namespace SovereignEngine
             catch
             {
                 Console.ForegroundColor = ConsoleColor.DarkGray;
-                Console.WriteLine("[!] Connection Handshake to local Node.js loop dropped. Asset safely indexed inside NTFS sparse shell.");
+                Console.WriteLine("[!] Connection Handshake to local Node.js loop dropped. Asset safely cached inside NTFS sparse shell.");
             }
             Console.ResetColor();
         }
@@ -132,7 +127,6 @@ namespace SovereignEngine
                 using (Process p = Process.Start(psi)!) { p.WaitForExit(); }
                 File.Delete(scriptPath);
 
-                // Force filesystem flags to compress physical link vectors to zero bytes safely
                 using (Process p1 = Process.Start(new ProcessStartInfo { FileName = "fsutil.exe", Arguments = $"sparse setflag {driveLetter}:\\", CreateNoWindow = true, UseShellExecute = false })!) { p1?.WaitForExit(); }
                 using (Process p2 = Process.Start(new ProcessStartInfo { FileName = "cmd.exe", Arguments = $"/c compact /c /s /exe:lzx {driveLetter}:\\*", CreateNoWindow = true, UseShellExecute = false })!) { p2?.WaitForExit(); }
             }
@@ -142,27 +136,42 @@ namespace SovereignEngine
             }
         }
 
-        private static void MonitorChakraReserves()
+        // REMOVED WMI ASSEMBLY: Pulling battery stats cleanly via native shell operations
+        private static void QueryNativeBatteryMetrics()
         {
             try
             {
-                ObjectQuery query = new ObjectQuery("SELECT * FROM Win32_Battery");
-                using (ManagementObjectSearcher searcher = new ManagementObjectSearcher(query))
+                ProcessStartInfo wmicPsi = new ProcessStartInfo
                 {
-                    foreach (ManagementObject battery in searcher.Get())
+                    FileName = "cmd.exe",
+                    Arguments = "/c wmic path Win32_Battery get EstimatedChargeRemaining",
+                    CreateNoWindow = true,
+                    RedirectStandardOutput = true,
+                    UseShellExecute = false
+                };
+
+                using (Process p = Process.Start(wmicPsi)!)
+                {
+                    string output = p.StandardOutput.ReadToEnd().Trim();
+                    p.WaitForExit();
+                    
+                    string[] lines = output.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries);
+                    if (lines.Length > 1)
                     {
-                        string estimatedCharge = battery["EstimatedChargeRemaining"]?.ToString();
                         Console.ForegroundColor = ConsoleColor.DarkGray;
-                        Console.WriteLine($" -> Chassis Power Status:         {estimatedCharge}% Capacity Detected.");
+                        Console.WriteLine($" -> Chassis Power Status:         {lines[1].Trim()}% Capacity Detected.");
+                        Console.ResetColor();
+                        return;
                     }
                 }
+                throw new Exception();
             }
             catch
             {
                 Console.ForegroundColor = ConsoleColor.DarkGray;
-                Console.WriteLine(" -> Chassis Power Status:         AC Wall Outlets Grounded / Continuous Power Grid.");
+                Console.WriteLine(" -> Chassis Power Status:         AC Wall Power Confirmed / Mainboard Grounded.");
+                Console.ResetColor();
             }
-            Console.ResetColor();
         }
 
         private static void TriggerThermalFanSurge()
@@ -178,7 +187,7 @@ namespace SovereignEngine
                 };
                 using (Process p = Process.Start(powerCfgPsi)!) { p.WaitForExit(); }
             }
-            catch { /* Handled silently */ }
+            catch { /* Silently catch if user restrictions apply */ }
         }
     }
 }
