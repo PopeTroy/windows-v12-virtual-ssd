@@ -19,7 +19,7 @@ namespace SovereignEngine
         {
             Console.ForegroundColor = ConsoleColor.Cyan;
             Console.WriteLine("=========================================================================");
-            Console.WriteLine("   UESP SOVEREIGN v6.0.0 - CLOUD SHINOBI CONTROLLER (ZERO ASSEMBLE)      ");
+            Console.WriteLine("   UESP SOVEREIGN v6.0.0 - CLOUD SHINOBI CORE (ZERO EXTERNAL ASSEMBLE)   ");
             Console.WriteLine("=========================================================================");
             Console.ResetColor();
 
@@ -33,7 +33,7 @@ namespace SovereignEngine
                 Console.WriteLine("\n[-] Activating Byakugan Vision: Provisioning virtual cloud gateway...");
                 MountCloudBubbleInterface(vhdxPath, capacityGB);
 
-                // PHASE 2: EVALUATE ENVIRONMENT CHAKRA STABILITY VIA NATIVE CLI
+                // PHASE 2: EVALUATE ENVIRONMENT CHAKRA STABILITY VIA NATIVE CLI HOOKS
                 QueryNativeBatteryMetrics();
                 TriggerThermalFanSurge();
 
@@ -75,7 +75,7 @@ namespace SovereignEngine
             {
                 TriggerThermalFanSurge();
 
-                // Cushion Delay: Gives mechanical 200GB HDD head time to stabilize sector locks
+                // Cushion Delay: Gives mechanical 200GB HDD head time to stabilize sector writing locks
                 await Task.Delay(400).ConfigureAwait(false);
 
                 if (!File.Exists(e.FullPath)) return;
@@ -136,7 +136,7 @@ namespace SovereignEngine
             }
         }
 
-        // REMOVED WMI ASSEMBLY: Pulling battery stats cleanly via native shell operations
+        // REFACTORED PROCESS: Captures battery tracks cleanly via native shell commands instead of a WMI assembly reference
         private static void QueryNativeBatteryMetrics()
         {
             try
