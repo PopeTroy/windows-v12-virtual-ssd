@@ -5,7 +5,7 @@ const fs = require('fs');
 const app = express();
 const port = 3000;
 
-// Use explicit raw data limits to accommodate heavy file extractions
+// Use explicit data payload limits to handle heavy data extractions smoothly
 app.use(express.json({ limit: '50mb' }));
 
 console.log("\x1b[35m=========================================================================");
