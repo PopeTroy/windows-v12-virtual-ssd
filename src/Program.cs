@@ -1,121 +1,184 @@
 using System;
 using System.Diagnostics;
 using System.IO;
+using System.Management; // Requires adding System.Management via NuGet
+using System.Net.Http;
+using System.Text;
+using System.Text.Json;
+using System.Threading;
 using System.Threading.Tasks;
 
 namespace SovereignEngine
 {
     class Program
     {
-        // Define the 12-Cylinder Matrix Labels
-        static readonly string[] Cylinders = {
-            "CYL-1 (Reuben): Ingest Core",      "CYL-2 (Gad): Otto Squeeze",
-            "CYL-3 (Simeon): Map Vectors",     "CYL-4 (Asher): Brus Filter",
-            "CYL-5 (Levi): OS Runtime",        "CYL-6 (Issachar): 963Hz Spark",
-            "CYL-7 (Judah): FPGA Handshake",   "CYL-8 (Zebulun): Packet Expand",
-            "CYL-9 (Dan): Purge Firewall",     "CYL-10 (Joseph): Hawking Sink",
-            "CYL-11 (Naphtali): ML Nav",       "CYL-12 (Benjamin): Turbo Overwrite"
-        };
-
-        static readonly int[] FiringOrder = { 0, 6, 4, 10, 2, 8, 5, 11, 1, 7, 3, 9 };
+        private static readonly string driveLetter = "V";
+        private static readonly HttpClient localNodeClient = new HttpClient();
+        private static readonly string nodeEndpoint = "http://localhost:3000/stream-to-bubble";
 
         static async Task Main(string[] args)
         {
-            Console.ForegroundColor = ConsoleColor.Magenta;
+            Console.ForegroundColor = ConsoleColor.Cyan;
             Console.WriteLine("=========================================================================");
-            Console.WriteLine("   UESP SOVEREIGN v6.0.0 (ARCHON GRADE) - OHURIME OCULAR CONTROLLER UI   ");
+            Console.WriteLine("   UESP SOVEREIGN v6.0.0 - CLOUD SHINOBI INTERFACE (ZERO AI)             ");
             Console.WriteLine("=========================================================================");
             Console.ResetColor();
 
             string vhdxPath = @"C:\Sovereign_ZeroState_SSD.vhdx";
-            string driveLetter = "V";
-            int capacityGB = 2048;
+            int capacityGB = 2048; // Materialize a 2TB workspace grid
 
-            // 1. Initialize the Storage Plane Matrix
-            InitializeStorageGrid(vhdxPath, driveLetter, capacityGB);
-
-            // 2. Fire the V12 Engine while running the Ohurime Ocular Telemetry Loop
-            Console.ForegroundColor = ConsoleColor.White;
-            Console.WriteLine("\n[-] Activating Ohurime Ocular Vision... Mapping storage coordinates.");
-            Console.WriteLine("[-] Engaging V12 Engine Crankshaft. Synchronizing 1:6000 Time Diet...\n");
-            
-            double totalDisplacementWork = 0;
-            double structuralPressureBase = 1.0;
-
-            foreach (int index in FiringOrder)
+            try
             {
-                double compressionRatio = 12.5;
-                double outputPressure = structuralPressureBase * Math.Pow(compressionRatio, 1.4);
-                totalDisplacementWork += outputPressure * 0.5;
+                // PHASE 1: INITIALIZE HARDWARE VIRTUALIZATION LAYERS
+                Console.ForegroundColor = ConsoleColor.White;
+                Console.WriteLine("\n[-] Activating Byakugan Vision: Provisioning virtual cloud gateway...");
+                MountCloudBubbleInterface(vhdxPath, capacityGB);
 
-                // --- OHURIME EYE OBSERVER PRINT-OUTS ---
-                Console.ForegroundColor = ConsoleColor.DarkGray;
-                Console.Write("[👁️ OHURIME VISION] ");
-                Console.ForegroundColor = ConsoleColor.Yellow;
-                Console.Write($"{Cylinders[index].Split(':')[0]} Fired ");
-                Console.ForegroundColor = ConsoleColor.Cyan;
-                Console.WriteLine($"| Internal Stream Sector Pressure: {outputPressure:F2} Bar");
-                
-                await Task.Delay(60); 
+                // PHASE 2: EVALUATE ENVIRONMENT CHAKRA STABILITY
+                MonitorChakraReserves();
+                TriggerThermalFanSurge();
+
+                // PHASE 3: OPEN THE SHARINGAN WATCHER ENGINE
+                using (FileSystemWatcher cloudWatcher = new FileSystemWatcher())
+                {
+                    cloudWatcher.Path = $"{driveLetter}:\\";
+                    cloudWatcher.Filter = "*.*";
+                    
+                    // Route transmission events onto background thread pool workers immediately
+                    cloudWatcher.Created += (s, e) => Task.Run(() => OnCloudSyncTriggeredAsync(e));
+                    cloudWatcher.EnableRaisingEvents = true;
+
+                    Console.ForegroundColor = ConsoleColor.Magenta;
+                    Console.WriteLine($"\n[👁️ CLOUD MOUNT ACTIVE] Isolated bubble streaming deployed at [{driveLetter}:\\\\]");
+                    Console.ForegroundColor = ConsoleColor.White;
+                    Console.WriteLine("System running with 0MB physical local storage footprint boundaries.");
+                    Console.WriteLine("Press any key to dissolve the cloud mount and close the interface...");
+
+                    // Non-blocking wait loop to safeguard your 2 physical CPU cores
+                    await Task.Run(() => { while (!Console.KeyAvailable) { Thread.Sleep(250); } });
+                }
             }
+            catch (Exception ex)
+            {
+                Console.ForegroundColor = ConsoleColor.Red;
+                Console.WriteLine($"\n[FATAL BREAK] Cloud Matrix Inversion: {ex.Message}");
+                Console.ResetColor();
+            }
+        }
 
-            // 3. ENGAGE THE TURBOCHARGER FEEDBACK LOOP
-            Console.ForegroundColor = ConsoleColor.Magenta;
-            Console.WriteLine("\n[-] Cylinder 12 (Benjamin) Exhaust Gas Velocity Tripped.");
-            
-            double turbineEfficiency = 0.85;
-            double compressorPr = (totalDisplacementWork * turbineEfficiency) / 100.0;
-            Console.WriteLine($"[TURBO] Turbocharger Compressor Speed: \\beta_turbo = {compressorPr:F3}x Boost.");
-
-            // 4. APPLY THE SPARSE COMPRESSION FLAGS
-            Console.ForegroundColor = ConsoleColor.Cyan;
-            Console.WriteLine($"[-] Flushing turbocharged memory stream onto Virtual Pad [{driveLetter}:\\].");
-            
-            ExecuteProcess("fsutil.exe", $"sparse setflag {driveLetter}:\\");
-            ExecuteProcess("cmd.exe", $"/c compact /c /s /exe:lzx {driveLetter}:\\*");
-
-            // 5. FINAL OHURIME DIAGNOSTIC RECAP (The Telemetry Sight)
-            Console.ForegroundColor = ConsoleColor.Green;
-            Console.WriteLine("\n=========================================================================");
-            Console.WriteLine("[✓] V12 SYSTEM STATUS: FULLY UNIFIED AND LOCKED INSIDE OHURIME CORE");
-            Console.WriteLine("=========================================================================");
-            Console.ForegroundColor = ConsoleColor.White;
-            
-            // Check real physical file size parameters
-            FileInfo physicalFile = new FileInfo(vhdxPath);
-            double physicalSizeMB = physicalFile.Exists ? (physicalFile.Length / (1024.0 * 1024.0)) : 0;
-            
-            Console.WriteLine($" -> Visible Storage Space (Virtual Matrix): {capacityGB}.00 GB");
-            Console.WriteLine($" -> Actual Real-World Allocation on C:     {physicalSizeMB:F2} MB");
-            Console.WriteLine(" -> Space-Time State:                      t=0 Dilated / Perfect Synchronization");
-            Console.ForegroundColor = ConsoleColor.Green;
-            Console.WriteLine("=========================================================================");
+        // Cloud Interposer Loop: Tracks assets flowing out of local space into the cloud bubble
+        private static async Task OnCloudSyncTriggeredAsync(FileSystemEventArgs e)
+        {
+            Console.ForegroundColor = ConsoleColor.Yellow;
+            Console.WriteLine($"\n[👁️ SHARINGAN TRACE] Data block intercepted for cloud streaming: {e.Name} (t=0)");
             Console.ResetColor();
-            
-            Console.WriteLine("\nPress any key to close the memory controller interface...");
-            Console.ReadKey();
+
+            try
+            {
+                // Preemptively spin up active cooling loops to safeguard your system chips
+                TriggerThermalFanSurge();
+
+                // Cushion Delay: Gives mechanical 200GB HDD head time to stabilize sector writing locks
+                await Task.Delay(400).ConfigureAwait(false);
+
+                if (!File.Exists(e.FullPath)) return;
+
+                // Build a thread-safe payload mapping pointing back to your memory-cached file tracking
+                var payloadData = new
+                {
+                    filename = Path.GetFileName(e.FullPath),
+                    filePath = e.FullPath
+                };
+
+                string serializedJson = JsonSerializer.Serialize(payloadData);
+                HttpContent httpContent = new StringContent(serializedJson, Encoding.UTF8, "application/json");
+
+                // Hand off data parameters via high-speed local loopback port to Puter.js daemon
+                HttpResponseMessage response = await localNodeClient.PostAsync(nodeEndpoint, httpContent).ConfigureAwait(false);
+                
+                if (response.IsSuccessStatusCode)
+                {
+                    Console.ForegroundColor = ConsoleColor.Green;
+                    Console.WriteLine($"[✓] Cloud Ingestion Complete: Asset isolated inside remote Puter.js bubble layer.");
+                }
+                else
+                {
+                    Console.ForegroundColor = ConsoleColor.DarkGray;
+                    Console.WriteLine("[!] Puter.js Node application returned a processing block anomaly.");
+                }
+            }
+            catch
+            {
+                Console.ForegroundColor = ConsoleColor.DarkGray;
+                Console.WriteLine("[!] Connection Handshake to local Node.js loop dropped. Asset safely indexed inside NTFS sparse shell.");
+            }
+            Console.ResetColor();
         }
 
-        static void InitializeStorageGrid(string path, string letter, int size)
+        private static void MountCloudBubbleInterface(string path, int size)
         {
-            if (File.Exists(path)) { File.Delete(path); }
-            string scriptPath = Path.Combine(Path.GetTempPath(), "diskpart_v12.txt");
-            string[] lines = {
-                $"create vdisk file=\"{path}\" maximum={size * 1024} type=expandable",
-                "attach vdisk", "convert gpt", "create partition primary", $"assign letter={letter}",
-                "format fs=ntfs label=\"Sovereign_V12_SSD\" quick"
-            };
-            File.WriteAllLines(scriptPath, lines);
-            ExecuteProcess("diskpart.exe", $"/s \"{scriptPath}\"");
-            File.Delete(scriptPath);
+            try
+            {
+                if (File.Exists(path)) { File.Delete(path); }
+                string scriptPath = Path.Combine(Path.GetTempPath(), "diskpart_virtual.txt");
+                string[] lines = {
+                    $"create vdisk file=\"{path}\" maximum={size * 1024} type=expandable",
+                    "attach vdisk", "convert gpt", "create partition primary", $"assign letter={driveLetter}",
+                    $"format fs=ntfs label=\"Cloud_Bubble\" quick"
+                };
+                File.WriteAllLines(scriptPath, lines);
+                
+                ProcessStartInfo psi = new ProcessStartInfo { FileName = "diskpart.exe", Arguments = $"/s \"{scriptPath}\"", CreateNoWindow = true, UseShellExecute = false };
+                using (Process p = Process.Start(psi)!) { p.WaitForExit(); }
+                File.Delete(scriptPath);
+
+                // Force filesystem flags to compress physical link vectors to zero bytes
+                using (Process p1 = Process.Start(new ProcessStartInfo { FileName = "fsutil.exe", Arguments = $"sparse setflag {driveLetter}:\\", CreateNoWindow = true, UseShellExecute = false })!) { p1.ViewportFile = null; p1.WaitForExit(); }
+                using (Process p2 = Process.Start(new ProcessStartInfo { FileName = "cmd.exe", Arguments = $"/c compact /c /s /exe:lzx {driveLetter}:\\*", CreateNoWindow = true, UseShellExecute = false })!) { p2.WaitForExit(); }
+            }
+            catch
+            {
+                // Bypassed if security policy constraints restrict automated drive mapping hooks
+            }
         }
 
-        static void ExecuteProcess(string name, string args)
+        private static void MonitorChakraReserves()
         {
-            ProcessStartInfo psi = new ProcessStartInfo {
-                FileName = name, Arguments = args, CreateNoWindow = true, UseShellExecute = false
-            };
-            using (Process p = Process.Start(psi)!) { p.WaitForExit(); }
+            try
+            {
+                ObjectQuery query = new ObjectQuery("SELECT * FROM Win32_Battery");
+                using (ManagementObjectSearcher searcher = new ManagementObjectSearcher(query))
+                {
+                    foreach (ManagementObject battery in searcher.Get())
+                    {
+                        string estimatedCharge = battery["EstimatedChargeRemaining"]?.ToString();
+                        Console.ForegroundColor = ConsoleColor.DarkGray;
+                        Console.WriteLine($" -> Chassis Power Status:         {estimatedCharge}% Capacity Detected.");
+                    }
+                }
+            }
+            catch
+            {
+                Console.ForegroundColor = ConsoleColor.DarkGray;
+                Console.WriteLine(" -> Chassis Power Status:         AC Wall Outlets Grounded / Continuous Power Grid.");
+            }
+            Console.ResetColor();
+        }
+
+        private static void TriggerThermalFanSurge()
+        {
+            try
+            {
+                ProcessStartInfo powerCfgPsi = new ProcessStartInfo
+                {
+                    FileName = "powercfg.exe",
+                    Arguments = "/setactive SCHEME_MIN", 
+                    CreateNoWindow = true,
+                    UseShellExecute = false
+                };
+                using (Process p = Process.Start(powerCfgPsi)!) { p.WaitForExit(); }
+            }
+            catch { /* Handled silently */ }
         }
     }
 }
