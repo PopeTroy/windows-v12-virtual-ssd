@@ -4,6 +4,7 @@ using System.Diagnostics;
 using System.IO;
 using System.Net.Http;
 using System.Net.Http.Headers;
+using System.Runtime.InteropServices;
 using System.Text;
 using System.Text.Json;
 using System.Threading;
@@ -23,6 +24,16 @@ namespace SovereignEngine
         // Enterprise Remote Fabric Targets
         private static readonly string DgxEndpoint = Environment.GetEnvironmentVariable("NVIDIA_DGX_CLUSTER_URI") ?? "https://api.ngc.nvidia.com/v2/dgx/ingest";
         private static readonly string DgxApiKey = Environment.GetEnvironmentVariable("NVIDIA_DGX_API_KEY") ?? string.Empty;
+
+        // P/Invoke Native FFI Signature for High-Throughput Rust SIMD Edge Compressor
+        [DllImport("sovereign_compressor.dll", CallingConvention = CallingConvention.Cdecl)]
+        private static unsafe extern long sovereign_compress_chunk(
+            byte* inputPtr,
+            nuint inputLen,
+            byte* outputPtr,
+            nuint maxOutputLen,
+            int compressionLevel
+        );
 
         static async Task Main(string[] args)
         {
@@ -78,8 +89,11 @@ namespace SovereignEngine
 
         private static async Task OnFileSystemObjectCreatedAsync(FileSystemEventArgs e)
         {
+            // Resolve nullable reference compiler warnings
+            string relativeName = e.Name ?? Path.GetFileName(e.FullPath);
+
             Console.ForegroundColor = ConsoleColor.Cyan;
-            Console.WriteLine($"\n[CLOUD INTERCEPT] Target detected: {e.Name} (t=0)");
+            Console.WriteLine($"\n[CLOUD INTERCEPT] Target detected: {relativeName} (t=0)");
             Console.ResetColor();
 
             try
@@ -90,14 +104,14 @@ namespace SovereignEngine
                 // HANDLE FOLDERS / DIRECTORIES
                 if (Directory.Exists(e.FullPath))
                 {
-                    await RegisterDirectoryToCloudAsync(e.Name).ConfigureAwait(false);
+                    await RegisterDirectoryToCloudAsync(relativeName).ConfigureAwait(false);
                     return;
                 }
 
                 // HANDLE FILES
                 if (File.Exists(e.FullPath))
                 {
-                    await ProcessAndEvictFileAsync(e.FullPath, e.Name).ConfigureAwait(false);
+                    await ProcessAndEvictFileAsync(e.FullPath, relativeName).ConfigureAwait(false);
                 }
             }
             catch (Exception ex)
@@ -112,13 +126,17 @@ namespace SovereignEngine
         {
             var startTime = DateTime.UtcNow;
             byte[] rawPayloadBytes = await File.ReadAllBytesAsync(fullPath).ConfigureAwait(false);
+            
+            // Execute parallel SIMD edge compression via Rust native engine
+            byte[] compressedPayload = await CompressWithRustNativeEngineAsync(rawPayloadBytes).ConfigureAwait(false);
+
             string blockHash = $"BLK_{Guid.NewGuid().ToString("N").Substring(0, 12).ToUpper()}";
 
             // 1. Register file entry in remote index table
             await UpdateMetadataRegistryAsync(relativeName, blockHash, rawPayloadBytes.Length, "FILE").ConfigureAwait(false);
 
             // 2. Stream byte payload up to DGX Cloud / Serverless fabric
-            bool uploadSuccess = await StreamPayloadToCloudAsync(relativeName, rawPayloadBytes).ConfigureAwait(false);
+            bool uploadSuccess = await StreamPayloadToCloudAsync(relativeName, compressedPayload).ConfigureAwait(false);
 
             // 3. ZERO-FOOTPRINT GUARANTEE: Truncate local disk contents instantly to 0-bytes
             if (uploadSuccess)
@@ -137,6 +155,53 @@ namespace SovereignEngine
                 Console.WriteLine($"⚡ [ZERO DISK BLOAT] '{relativeName}' offloaded to Cloud in {duration:F4}s. Local physical size: 0 Bytes.");
                 Console.ResetColor();
             }
+        }
+
+        private static async Task<byte[]> CompressWithRustNativeEngineAsync(byte[] rawPayload)
+        {
+            return await Task.Run(() =>
+            {
+                try
+                {
+                    unsafe
+                    {
+                        byte[] compressedBuffer = new byte[rawPayload.Length];
+
+                        fixed (byte* pInput = rawPayload)
+                        fixed (byte* pOutput = compressedBuffer)
+                        {
+                            long resultLen = sovereign_compress_chunk(
+                                pInput,
+                                (nuint)rawPayload.Length,
+                                pOutput,
+                                (nuint)compressedBuffer.Length,
+                                3
+                            );
+
+                            if (resultLen > 0)
+                            {
+                                byte[] finalSqueezedData = new byte[resultLen];
+                                Array.Copy(compressedBuffer, finalSqueezedData, resultLen);
+
+                                double squeezeRatio = 100.0 - ((double)resultLen / rawPayload.Length * 100.0);
+                                Console.ForegroundColor = ConsoleColor.Magenta;
+                                Console.WriteLine($"⚡ [RUST SIMD ENGINE] Compressed payload by {squeezeRatio:F2}% in system RAM.");
+                                Console.ResetColor();
+
+                                return finalSqueezedData;
+                            }
+                        }
+                    }
+                }
+                catch
+                {
+                    Console.ForegroundColor = ConsoleColor.DarkGray;
+                    Console.WriteLine("[!] Rust native compression library unavailable. Defaulting to standard memory stream.");
+                    Console.ResetColor();
+                }
+
+                return rawPayload;
+            });
         }
 
         private static async Task RegisterDirectoryToCloudAsync(string directoryName)
@@ -235,8 +300,8 @@ namespace SovereignEngine
 
             var updatedTable = new
             {
-                partition_id = root.GetProperty("partition_id").GetString(),
-                allocation_timestamp = root.GetProperty("allocation_timestamp").GetString(),
+                partition_id = root.GetProperty("partition_id").GetString() ?? PartitionId,
+                allocation_timestamp = root.GetProperty("allocation_timestamp").GetString() ?? DateTime.UtcNow.ToString("yyyy-MM-ddTHH:mm:ssZ"),
                 mapped_blocks = mappedBlocks
             };
 
