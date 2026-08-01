@@ -91,6 +91,7 @@ namespace SovereignEngine
                     Console.WriteLine("  • Zero Local Disk Bloat Architecture : ENGAGED");
                     Console.WriteLine("  • Vector Embedding Engine            : nemotron-3-embed-1b");
                     Console.WriteLine("  • On-Device SLM RAG Agent            : nemotron-mini-4b-instruct");
+                    Console.WriteLine("  • Offline Sentinels Primed           : Madara Uchiha & Obito Uchiha");
                     Console.WriteLine("  • RAM Vector Store                   : ACTIVE (0 Disk Overhead)");
 
                     bool isNonInteractive = Console.IsInputRedirected || Environment.GetEnvironmentVariable("GITHUB_ACTIONS") == "true";
@@ -249,6 +250,76 @@ namespace SovereignEngine
             }
         }
 
+        // --- OFFLINE NEMOTRON INSTRUCT SENTINEL CLONES (MADARA & OBITO) ---
+
+        public static async Task<string> InvokeMadaraSentinelAsync(string userQuery, string retrievedContext = "")
+        {
+            string systemPrompt = "You are Madara Uchiha. You are grand, authoritative, dominating, and deeply strategic. " +
+                                 "You view this zero-footprint virtual storage engine as an absolute reality under your command. " +
+                                 "Respond using your sharp Uchiha vision, incorporating retrieved context naturally.";
+
+            return await QueryNemotronInstructSentinelAsync("nvidia/nemotron-mini-4b-instruct", systemPrompt, userQuery, retrievedContext).ConfigureAwait(false);
+        }
+
+        public static async Task<string> InvokeObitoSentinelAsync(string userQuery, string retrievedContext = "")
+        {
+            string systemPrompt = "You are Obito Uchiha (Tobi / Masked Man). You are cynical, philosophical, calculating, and untethered from physical constraints. " +
+                                 "You view $t=0$ local disk eviction like Kamui—phasing matter away into the cloud vector matrix while keeping complete control. " +
+                                 "Respond with calm conviction, referencing your vision of reality.";
+
+            return await QueryNemotronInstructSentinelAsync("nvidia/nemotron-mini-4b-instruct", systemPrompt, userQuery, retrievedContext).ConfigureAwait(false);
+        }
+
+        private static async Task<string> QueryNemotronInstructSentinelAsync(string modelName, string systemPrompt, string userQuery, string context)
+        {
+            try
+            {
+                if (string.IsNullOrEmpty(DgxApiKey))
+                {
+                    // Offline Local Fallback Simulation
+                    return $"[OFFLINE SLM ROUTING] ({modelName}): Context parsed ({context.Length} chars). Query evaluated locally.";
+                }
+
+                string promptWithContext = string.IsNullOrEmpty(context) 
+                    ? userQuery 
+                    : $"Context retrieved from RAM Vector Store:\n{context}\n\nUser Question: {userQuery}";
+
+                var requestBody = new
+                {
+                    model = modelName,
+                    messages = new[]
+                    {
+                        new { role = "system", content = systemPrompt },
+                        new { role = "user", content = promptWithContext }
+                    },
+                    temperature = 0.7,
+                    max_tokens = 512
+                };
+
+                string jsonContent = JsonSerializer.Serialize(requestBody);
+                var content = new StringContent(jsonContent, Encoding.UTF8, "application/json");
+
+                CloudClient.DefaultRequestHeaders.Clear();
+                CloudClient.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", DgxApiKey);
+
+                HttpResponseMessage response = await CloudClient.PostAsync(InstructModelUri, content).ConfigureAwait(false);
+                if (response.IsSuccessStatusCode)
+                {
+                    string jsonResponse = await response.Content.ReadAsStringAsync().ConfigureAwait(false);
+                    using JsonDocument doc = JsonDocument.Parse(jsonResponse);
+                    return doc.RootElement.GetProperty("choices")[0].GetProperty("message").GetProperty("content").GetString() ?? "";
+                }
+            }
+            catch (Exception ex)
+            {
+                return $"[SENTINEL FAULT] Could not invoke offline model: {ex.Message}";
+            }
+
+            return "[SENTINEL FAULT] Request failed with non-success status code.";
+        }
+
+        // --- END OF SENTINEL CLONES ---
+
         private static void EvictFileToZeroBytes(string fullPath, string relativeName)
         {
             using (Process p = Process.Start(new ProcessStartInfo 
@@ -332,135 +403,4 @@ namespace SovereignEngine
                 // Push payload straight into NVIDIA DGX Cloud / NIM Pipeline
                 var dgxPayload = new
                 {
-                    partition_id = PartitionId,
-                    filename = fileName,
-                    byte_size = payloadBytes.Length,
-                    payload_base64 = Convert.ToBase64String(payloadBytes),
-                    target_pipeline = "NVIDIA-NIM-SUPERCOMPUTE-INGEST"
-                };
-
-                string jsonContent = JsonSerializer.Serialize(dgxPayload);
-                var content = new StringContent(jsonContent, Encoding.UTF8, "application/json");
-
-                CloudClient.DefaultRequestHeaders.Clear();
-                CloudClient.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", DgxApiKey);
-
-                HttpResponseMessage response = await CloudClient.PostAsync(DgxEndpoint, content).ConfigureAwait(false);
-                return response.IsSuccessStatusCode;
-            }
-            catch
-            {
-                return false;
-            }
-        }
-
-        private static void InitializeVirtualStorageEnvironment()
-        {
-            Directory.CreateDirectory(Path.GetDirectoryName(MetadataIndex)!);
-
-            if (!File.Exists(MetadataIndex))
-            {
-                var baseTable = new
-                {
-                    partition_id = PartitionId,
-                    allocation_timestamp = DateTime.UtcNow.ToString("yyyy-MM-ddTHH:mm:ssZ"),
-                    mapped_blocks = new Dictionary<string, object>()
-                };
-
-                string serializedJson = JsonSerializer.Serialize(baseTable, new JsonSerializerOptions { WriteIndented = true });
-                File.WriteAllText(MetadataIndex, serializedJson);
-            }
-        }
-
-        private static async Task UpdateMetadataRegistryAsync(string entryName, string blockHash, int blockSize, string entryType)
-        {
-            if (!File.Exists(MetadataIndex)) return;
-
-            string jsonContent = await File.ReadAllTextAsync(MetadataIndex).ConfigureAwait(false);
-            using JsonDocument doc = JsonDocument.Parse(jsonContent);
-            
-            var root = doc.RootElement;
-            var mappedBlocks = new Dictionary<string, object>();
-
-            foreach (var property in root.GetProperty("mapped_blocks").EnumerateObject())
-            {
-                var blockDetails = new Dictionary<string, string>();
-                foreach (var detail in property.Value.EnumerateObject())
-                {
-                    blockDetails[detail.Name] = detail.Value.GetString() ?? "";
-                }
-                mappedBlocks[property.Name] = blockDetails;
-            }
-
-            mappedBlocks[entryName] = new Dictionary<string, string>
-            {
-                { "type", entryType },
-                { "virtual_block_address", blockHash },
-                { "byte_allocation", blockSize.ToString() },
-                { "cloud_sync_status", "SYNCHRONIZED_SECURE" },
-                { "last_sync", DateTime.UtcNow.ToString("yyyy-MM-ddTHH:mm:ssZ") }
-            };
-
-            var updatedTable = new
-            {
-                partition_id = root.GetProperty("partition_id").GetString() ?? PartitionId,
-                allocation_timestamp = root.GetProperty("allocation_timestamp").GetString() ?? DateTime.UtcNow.ToString("yyyy-MM-ddTHH:mm:ssZ"),
-                mapped_blocks = mappedBlocks
-            };
-
-            string updatedJson = JsonSerializer.Serialize(updatedTable, new JsonSerializerOptions { WriteIndented = true });
-            await File.WriteAllTextAsync(MetadataIndex, updatedJson).ConfigureAwait(false);
-        }
-
-        private static void MountCloudBubbleInterface(string path, int size)
-        {
-            try
-            {
-                if (File.Exists(path)) { File.Delete(path); }
-                string scriptPath = Path.Combine(Path.GetTempPath(), "diskpart_virtual.txt");
-                string[] lines = {
-                    $"create vdisk file=\"{path}\" maximum={size * 1024} type=expandable",
-                    "attach vdisk", "convert gpt", "create partition primary", $"assign letter={DriveLetter}",
-                    $"format fs=ntfs label=\"Sovereign_10TB\" quick"
-                };
-                File.WriteAllLines(scriptPath, lines);
-                
-                using (Process p = Process.Start(new ProcessStartInfo { FileName = "diskpart.exe", Arguments = $"/s \"{scriptPath}\"", CreateNoWindow = true, UseShellExecute = false })!) { p?.WaitForExit(); }
-                File.Delete(scriptPath);
-
-                // Enforce Sparse + LZX Flags across the drive letter layout
-                using (Process p1 = Process.Start(new ProcessStartInfo { FileName = "fsutil.exe", Arguments = $"sparse setflag {DriveLetter}:\\", CreateNoWindow = true, UseShellExecute = false })!) { p1?.WaitForExit(); }
-                using (Process p2 = Process.Start(new ProcessStartInfo { FileName = "cmd.exe", Arguments = $"/c compact /c /s /exe:lzx {DriveLetter}:\\*", CreateNoWindow = true, UseShellExecute = false })!) { p2?.WaitForExit(); }
-            }
-            catch { }
-        }
-
-        private static void QueryNativeBatteryMetrics()
-        {
-            try
-            {
-                using (Process p = Process.Start(new ProcessStartInfo { FileName = "cmd.exe", Arguments = "/c wmic path Win32_Battery get EstimatedChargeRemaining", CreateNoWindow = true, RedirectStandardOutput = true, UseShellExecute = false })!)
-                {
-                    string output = p?.StandardOutput.ReadToEnd().Trim() ?? "";
-                    p?.WaitForExit();
-                    string[] lines = output.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries);
-                    if (lines.Length > 1)
-                    {
-                        Console.ForegroundColor = ConsoleColor.DarkGray;
-                        Console.WriteLine($" -> Hardware Chassis Reserve:      {lines[1].Trim()}% Power.");
-                    }
-                }
-            }
-            catch { }
-        }
-
-        private static void TriggerThermalFanSurge()
-        {
-            try
-            {
-                using (Process p = Process.Start(new ProcessStartInfo { FileName = "powercfg.exe", Arguments = "/setactive SCHEME_MIN", CreateNoWindow = true, UseShellExecute = false })!) { p?.WaitForExit(); }
-            }
-            catch { }
-        }
-    }
-}
+      
