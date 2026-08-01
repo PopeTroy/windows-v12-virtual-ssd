@@ -6,7 +6,7 @@ edition = "2021"
 [lib]
 name = "sovereign_compressor"
 crate-type = ["cdylib"]
-path = "lib.rs" # <-- Expressly tells Cargo where lib.rs lives!
+path = "src/lib.rs"   # <-- Points explicitly to src/lib.rs
 
 [dependencies]
 zstd = "0.13"
