@@ -1,46 +1,31 @@
-name: Compile Standalone Executable
+name: Build Sovereign Virtual SSD Engine
 
 on:
-  release:
-    types: [published]
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
 
 jobs:
   build:
     runs-on: windows-latest
 
     steps:
-    - name: Checkout Code Matrix
-      uses: actions/checkout@v4
+    - uses: actions/checkout@v4
 
-    - name: Setup .NET Environment
+    - name: Setup .NET
       uses: actions/setup-dotnet@v4
       with:
-        dotnet-version: '8.0.x'
+        dotnet-version: 8.0.x
 
-    - name: Debug Directory Mapping
-      run: |
-        echo "=== Current Working Directory File Map ==="
-        dir
-        echo "=========================================="
+    - name: Restore dependencies
+      run: dotnet restore SovereignSSD.csproj
 
-    - name: Run Production Compiler
-      run: |
-        # Recursively search for any .csproj file in the repository layout
-        $projectFile = Get-ChildItem -Filter *.csproj -Recurse | Select-Object -First 1
-        
-        if ($null -eq $projectFile) {
-            Write-Error "CRITICAL ERROR: No project deployment file ending in .csproj found anywhere in this repository!"
-            exit 1
-        }
-        
-        Write-Host "Found project matrix file at: $($projectFile.FullName)"
-        
-        # Execute the absolute-pathed single file compilation sequence
-        dotnet publish $projectFile.FullName -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -o ./build
+    - name: Build Project
+      run: dotnet build SovereignSSD.csproj --configuration Release --no-restore
 
-    - name: Upload Binary Asset to Release Channel
-      uses: softprops/action-gh-release@v2
-      with:
-        files: ./build/SovereignSSD.exe
+    - name: Test Pipeline Compilation
       env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        NVIDIA_DGX_API_KEY: ${{ secrets.NVIDIA_DGX_API_KEY }}
+        SOVEREIGN_PARTITION_ID: "PART-CI-BUILD-TEST"
+      run: dotnet run --project SovereignSSD.csproj --no-build --configuration Release -- -test-run
