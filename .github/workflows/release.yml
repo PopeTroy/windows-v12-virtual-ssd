@@ -14,13 +14,31 @@ jobs:
     steps:
     - uses: actions/checkout@v4
 
+    # --- STEP 1: RUST TOOLCHAIN & NATIVE DLL COMPILATION ---
+    - name: Setup Rust Toolchain
+      uses: dtolnay/rust-toolchain@stable
+      with:
+        targets: x86_64-pc-windows-msvc
+
+    - name: Build Rust Native Edge Compressor DLL
+      run: |
+        cd sovereign_compressor
+        cargo build --release
+
+    # --- STEP 2: .NET 8 SETUP & DEPENDENCY RESTORE ---
     - name: Setup .NET
       uses: actions/setup-dotnet@v4
       with:
         dotnet-version: 8.0.x
 
-    - name: Restore dependencies
+    - name: Restore C# Dependencies
       run: dotnet restore SovereignSSD.csproj
+
+    # Stage the compiled Rust DLL into the C# build bin folder so P/Invoke finds it during tests
+    - name: Stage Sovereign Compressor DLL for Local Runtime
+      run: |
+        mkdir -p bin/Release/net8.0/
+        cp sovereign_compressor/target/release/sovereign_compressor.dll bin/Release/net8.0/
 
     - name: Build Project
       run: dotnet build SovereignSSD.csproj --configuration Release --no-restore
@@ -31,13 +49,20 @@ jobs:
         SOVEREIGN_PARTITION_ID: "PART-CI-BUILD-TEST"
       run: dotnet run --project SovereignSSD.csproj --no-build --configuration Release -- -test-run
 
-    # Compiles a single-file standalone Windows executable (.exe)
+    # --- STEP 3: PUBLISH SINGLE EXECUTABLE & STAGE RUST DLL BUNDLE ---
     - name: Publish Standalone Executable
       run: dotnet publish SovereignSSD.csproj --configuration Release -r win-x64 --self-contained true -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -o publish/
 
-    # Uploads SovereignVirtualSSD.exe as a downloadable GitHub Artifact
-    - name: Upload Windows Executable Artifact
+    # Ensure the unmanaged native Rust DLL sits directly alongside the published SovereignVirtualSSD.exe
+    - name: Bundle Native Rust DLL to Release Output
+      run: |
+        cp sovereign_compressor/target/release/sovereign_compressor.dll publish/
+
+    # --- STEP 4: UPLOAD ARTIFACT BUNDLE ---
+    - name: Upload Windows Executable & Native Core Artifacts
       uses: actions/upload-artifact@v4
       with:
         name: SovereignVirtualSSD-Windows-x64
-        path: publish/*.exe
+        path: |
+          publish/*.exe
+          publish/*.dll
