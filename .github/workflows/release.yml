@@ -5,7 +5,7 @@ on:
     branches: [ "main" ]
   pull_request:
     branches: [ "main" ]
-  workflow_dispatch: # Enables the manual "Run workflow" button in GitHub Actions UI
+  workflow_dispatch: # Enables manual "Run workflow" button in GitHub Actions UI
 
 jobs:
   build:
@@ -20,10 +20,9 @@ jobs:
       with:
         targets: x86_64-pc-windows-msvc
 
+    # Compiles directly from the root Cargo.toml!
     - name: Build Rust Native Edge Compressor DLL
-      run: |
-        cd sovereign_compressor
-        cargo build --release
+      run: cargo build --release
 
     # --- STEP 2: .NET 8 SETUP & DEPENDENCY RESTORE ---
     - name: Setup .NET
@@ -34,11 +33,11 @@ jobs:
     - name: Restore C# Dependencies
       run: dotnet restore SovereignSSD.csproj
 
-    # Stage the compiled Rust DLL into the C# build bin folder so P/Invoke finds it during tests
+    # Stage the compiled Rust DLL from target/release into C# bin folder for testing
     - name: Stage Sovereign Compressor DLL for Local Runtime
       run: |
         mkdir -p bin/Release/net8.0/
-        cp sovereign_compressor/target/release/sovereign_compressor.dll bin/Release/net8.0/
+        cp target/release/sovereign_compressor.dll bin/Release/net8.0/
 
     - name: Build Project
       run: dotnet build SovereignSSD.csproj --configuration Release --no-restore
@@ -53,10 +52,9 @@ jobs:
     - name: Publish Standalone Executable
       run: dotnet publish SovereignSSD.csproj --configuration Release -r win-x64 --self-contained true -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -o publish/
 
-    # Ensure the unmanaged native Rust DLL sits directly alongside the published SovereignVirtualSSD.exe
+    # Copy native Rust DLL into the publish directory alongside SovereignVirtualSSD.exe
     - name: Bundle Native Rust DLL to Release Output
-      run: |
-        cp sovereign_compressor/target/release/sovereign_compressor.dll publish/
+      run: cp target/release/sovereign_compressor.dll publish/
 
     # --- STEP 4: UPLOAD ARTIFACT BUNDLE ---
     - name: Upload Windows Executable & Native Core Artifacts
