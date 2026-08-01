@@ -39,7 +39,7 @@ namespace SovereignEngine
             {
                 // PHASE 1: INITIALIZE HARDWARE VIRTUALIZATION LAYERS
                 Console.ForegroundColor = ConsoleColor.White;
-                Console.WriteLine("\n[-] Provisions 10TB Virtual Storage Matrix...");
+                Console.WriteLine("\n[-] Provisioning 10TB Virtual Storage Matrix...");
                 MountCloudBubbleInterface(vhdxPath, capacityGB);
                 InitializeVirtualStorageEnvironment();
 
