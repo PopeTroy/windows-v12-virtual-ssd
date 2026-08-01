@@ -1,0 +1,13 @@
+[package]
+name = "sovereign_compressor"
+version = "1.0.0"
+edition = "2021"
+
+[lib]
+name = "sovereign_compressor"
+crate-type = ["cdylib"]
+path = "src/lib.rs"   # <-- Points explicitly to src/lib.rs
+
+[dependencies]
+zstd = "0.13"
+rayon = "1.8"
