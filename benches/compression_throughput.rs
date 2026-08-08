@@ -1,96 +1,113 @@
 use criterion::{
     black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput,
 };
-use rayon::prelude::*;
-use sovereign_compressor::sovereign_compress_chunk;
-use std::slice;
-use zstd::stream::encode_all;
+use sovereign_compressor::{compress_chunk, decompress_chunk};
+use std::time::Duration;
 
-/// Generates pseudo-random, moderately compressible data payload
-fn generate_test_payload(size_bytes: usize) -> Vec<u8> {
+/// Generates pseudo-random, non-trivial binary data to prevent unrealistic zero-byte compression ratios.
+fn generate_sample_data(size_bytes: usize) -> Vec<u8> {
     let mut data = Vec::with_capacity(size_bytes);
-    let pattern = b"SOVEREIGN_ENGINE_ZERO_COPY_CHAKRA_TREE_STREAM_1234567890_NEURAL_VECTOR_";
-    while data.len() < size_bytes {
-        let remaining = size_bytes - data.len();
-        let to_take = remaining.min(pattern.len());
-        data.extend_from_slice(&pattern[..to_take]);
+    let mut state: u64 = 0xDEADBEEFCAFE;
+
+    for i in 0..size_bytes {
+        // Xorshift64 LCG algorithm to generate deterministic pseudo-random bytes
+        state ^= state << 13;
+        state ^= state >> 7;
+        state ^= state << 17;
+
+        // Mix structured repetition (simulates compressible payload logs/JSON) with entropy
+        let byte = if i % 4 == 0 {
+            (i & 0xFF) as u8
+        } else {
+            (state & 0xFF) as u8
+        };
+        data.push(byte);
     }
+
     data
 }
 
-/// Single-threaded sequential Zstandard compression without Rayon parallelism
-fn compress_single_threaded(input: &[u8], level: i32, output_buffer: &mut [u8]) -> i64 {
-    match encode_all(input, level) {
-        Ok(compressed_bytes) => {
-            if compressed_bytes.len() > output_buffer.len() {
-                return -2;
-            }
-            unsafe {
-                std::ptr::copy_nonoverlapping(
-                    compressed_bytes.as_ptr(),
-                    output_buffer.as_mut_ptr(),
-                    compressed_bytes.len(),
-                );
-            }
-            compressed_bytes.len() as i64
-        }
-        Err(_) => -3,
-    }
-}
-
+/// Benchmarks Zstd + Rayon parallel compression throughput across varying sizes and levels
 fn bench_compression_throughput(c: &mut Criterion) {
-    let mut group = c.benchmark_group("Compression Throughput Comparison");
-    let compression_level = 3;
+    let mut group = c.benchmark_group("Sovereign_Compression_Throughput");
 
-    // Test sizes: 1 MB, 10 MB, and 50 MB payloads
-    let payload_sizes = vec![
-        1 * 1024 * 1024,  // 1 MB
-        10 * 1024 * 1024, // 10 MB
-        50 * 1024 * 1024, // 50 MB
+    // Configure Criterion statistical parameters for high precision
+    group.warm_up_time(Duration::from_secs(2));
+    group.measurement_time(Duration::from_secs(5));
+    group.sample_size(30);
+
+    // Test cases: 64 KB (single-thread path), 1 MB (boundary), 8 MB (Rayon parallel path)
+    let payload_sizes = [
+        ("64KB", 64 * 1024),
+        ("1MB", 1_024 * 1024),
+        ("8MB", 8 * 1024 * 1024),
     ];
 
-    for size in payload_sizes {
-        let input_data = generate_test_payload(size);
-        let mut output_buffer = vec![0u8; size * 2]; // Oversized output buffer to prevent -2 overflow
+    // Tested Zstandard Compression Levels: 1 (Fast), 3 (Default), 6 (High), 19 (Ultra)
+    let levels = [1, 3, 6, 19];
 
-        // Tell Criterion to calculate MB/s throughput based on input payload size
-        group.throughput(Throughput::Bytes(size as u64));
+    for (size_label, size_bytes) in payload_sizes {
+        let raw_data = generate_sample_data(size_bytes);
 
-        // 1. Single-Threaded Sequential Zstd Benchmark
-        group.bench_with_input(
-            BenchmarkId::new("Single-Threaded", format!("{}MB", size / (1024 * 1024))),
-            &size,
-            |b, _| {
+        // Tell Criterion how many bytes are processed per iteration to measure MB/s throughput
+        group.throughput(Throughput::Bytes(size_bytes as u64));
+
+        for &level in &levels {
+            let bench_id = BenchmarkId::new(format!("size_{}_level", size_label), level);
+
+            group.bench_with_input(bench_id, &raw_data, |b, data| {
                 b.iter(|| {
-                    compress_single_threaded(
-                        black_box(&input_data),
-                        compression_level,
-                        black_box(&mut output_buffer),
-                    )
+                    let compressed = compress_chunk(black_box(data), black_box(level))
+                        .expect("Compression failed during benchmark");
+                    black_box(compressed);
                 });
-            },
-        );
-
-        // 2. Rayon Parallel Chunked C-FFI (sovereign_compress_chunk) Benchmark
-        group.bench_with_input(
-            BenchmarkId::new("Rayon Parallel C-FFI", format!("{}MB", size / (1024 * 1024))),
-            &size,
-            |b, _| {
-                b.iter(|| {
-                    sovereign_compress_chunk(
-                        black_box(input_data.as_ptr()),
-                        black_box(input_data.len()),
-                        black_box(output_buffer.as_mut_ptr()),
-                        black_box(output_buffer.len()),
-                        compression_level,
-                    )
-                });
-            },
-        );
+            });
+        }
     }
 
     group.finish();
 }
 
-criterion_group!(benches, bench_compression_throughput);
+/// Benchmarks Zstd decompression throughput across varying sizes
+fn bench_decompression_throughput(c: &mut Criterion) {
+    let mut group = c.benchmark_group("Sovereign_Decompression_Throughput");
+
+    group.warm_up_time(Duration::from_secs(2));
+    group.measurement_time(Duration::from_secs(5));
+    group.sample_size(30);
+
+    let payload_sizes = [
+        ("64KB", 64 * 1024),
+        ("1MB", 1_024 * 1024),
+        ("8MB", 8 * 1024 * 1024),
+    ];
+
+    for (size_label, size_bytes) in payload_sizes {
+        let raw_data = generate_sample_data(size_bytes);
+        
+        // Compress data once at Level 3 for the decompression source input
+        let compressed_payload = compress_chunk(&raw_data, 3)
+            .expect("Pre-compression for decompression benchmark failed");
+
+        group.throughput(Throughput::Bytes(size_bytes as u64));
+
+        let bench_id = BenchmarkId::new("decompress_size", size_label);
+
+        group.bench_with_input(bench_id, &compressed_payload, |b, payload| {
+            b.iter(|| {
+                let decompressed = decompress_chunk(black_box(payload))
+                    .expect("Decompression failed during benchmark");
+                black_box(decompressed);
+            });
+        });
+    }
+
+    group.finish();
+}
+
+criterion_group!(
+    benches,
+    bench_compression_throughput,
+    bench_decompression_throughput
+);
 criterion_main!(benches);
