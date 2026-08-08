@@ -1,40 +1,31 @@
-name: Sovereign Engine CI Pipeline
+name: Sovereign Engine Integration Pipeline
 
 on:
   push:
-    branches: [ main, master ]
+    branches: [ "main" ]
   pull_request:
-    branches: [ main, master ]
+    branches: [ "main" ]
 
 jobs:
-  build-and-verify:
-    runs-on: windows-latest
+  build-and-test:
+    runs-on: ubuntu-latest
 
     steps:
-    - name: Checkout Code
-      uses: actions/checkout@v4
+    - uses: actions/checkout@v4
+
+    - name: Setup Rust Toolchain
+      uses: dtolnay/rust-toolchain@stable
+
+    - name: Build Rust Library
+      run: cargo build --release
+
+    - name: Execute Native Rust Tests
+      run: cargo test --release
 
     - name: Setup .NET 8 SDK
-      uses: actions/setup-dotnet@v4
+      uses: actions/setup-dotnet@v3
       with:
         dotnet-version: '8.0.x'
 
-    - name: Setup Rust
-      uses: actions-rs/toolchain@v1
-      with:
-        toolchain: stable
-        override: true
-
-    - name: Build Rust Native Compressor DLL
-      run: |
-        cd native/compressor
-        cargo build --release
-        copy target/release/sovereign_compressor.dll ../../sovereign_compressor.dll
-
-    - name: Build C# Sovereign Engine
-      run: dotnet build SovereignEngine.csproj -c Release
-
-    - name: Automated Engine Execution Test
-      env:
-        GITHUB_ACTIONS: "true"
-      run: dotnet run --project SovereignEngine.csproj -c Release
+    - name: Execute C# Unit Test Suite
+      run: dotnet test SovereignSSD.csproj --configuration Release
