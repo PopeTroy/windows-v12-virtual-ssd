@@ -4,7 +4,9 @@ version = "0.1.0"
 edition = "2021"
 
 [lib]
-crate-type = ["cdylib"]
+name = "sovereign_compressor"
+crate-type = ["cdylib", "rlib"]
 
 [dependencies]
-zstd = "0.13"
+rayon = "1.10.0"
+zstd = "0.13.0"
