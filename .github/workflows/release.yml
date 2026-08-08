@@ -1,11 +1,11 @@
-name: Build Sovereign Virtual SSD Engine
+name: Build Snake Sage Virtual LPU Engine
 
 on:
   push:
     branches: [ "main" ]
   pull_request:
     branches: [ "main" ]
-  workflow_dispatch: # Enables manual "Run workflow" button in GitHub Actions UI
+  workflow_dispatch: # Enables manual "Run workflow" trigger in GitHub Actions UI
 
 jobs:
   build:
@@ -20,47 +20,49 @@ jobs:
       with:
         targets: x86_64-pc-windows-msvc
 
-    # Compiles directly from the root Cargo.toml!
     - name: Build Rust Native Edge Compressor DLL
       run: cargo build --release
 
     # --- STEP 2: .NET 8 SETUP & DEPENDENCY RESTORE ---
-    - name: Setup .NET
+    - name: Setup .NET 8
       uses: actions/setup-dotnet@v4
       with:
         dotnet-version: 8.0.x
 
     - name: Restore C# Dependencies
-      run: dotnet restore SovereignSSD.csproj
+      run: dotnet restore SnakeSageEngine.csproj
 
-    # Stage the compiled Rust DLL from target/release into C# bin folder for testing
+    # Stage the compiled Rust DLL from target/release into C# bin folder for local runtime testing
     - name: Stage Sovereign Compressor DLL for Local Runtime
+      shell: pwsh
       run: |
-        mkdir -p bin/Release/net8.0/
-        cp target/release/sovereign_compressor.dll bin/Release/net8.0/
+        New-Item -ItemType Directory -Force -Path "bin/Release/net8.0/"
+        Copy-Item -Path "target/release/sovereign_compressor.dll" -Destination "bin/Release/net8.0/" -Force
 
-    - name: Build Project
-      run: dotnet build SovereignSSD.csproj --configuration Release --no-restore
+    - name: Build Snake Sage Engine
+      run: dotnet build SnakeSageEngine.csproj --configuration Release --no-restore
 
-    - name: Test Pipeline Compilation
+    - name: Test Pipeline Compilation & LPU Initialization
       env:
-        NVIDIA_DGX_API_KEY: ${{ secrets.NVIDIA_DGX_API_KEY }}
-        SOVEREIGN_PARTITION_ID: "PART-CI-BUILD-TEST"
-      run: dotnet run --project SovereignSSD.csproj --no-build --configuration Release -- -test-run
+        SNAKE_SAGE_LPU_COUNT: "6"
+        KURAMA_MAX_BUDGET_USD: "9.00"
+      run: dotnet run --project SnakeSageEngine.csproj --no-build --configuration Release -- --lpu-states=6
 
-    # --- STEP 3: PUBLISH SINGLE EXECUTABLE & STAGE RUST DLL BUNDLE ---
+    # --- STEP 3: PUBLISH STANDALONE EXECUTABLE & STAGE DLL BUNDLE ---
     - name: Publish Standalone Executable
-      run: dotnet publish SovereignSSD.csproj --configuration Release -r win-x64 --self-contained true -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -o publish/
+      run: dotnet publish SnakeSageEngine.csproj --configuration Release -r win-x64 --self-contained true -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -o publish/
 
-    # Copy native Rust DLL into the publish directory alongside SovereignVirtualSSD.exe
-    - name: Bundle Native Rust DLL to Release Output
-      run: cp target/release/sovereign_compressor.dll publish/
+    # Copy native Rust DLL and UAC manifest into the publish output folder
+    - name: Bundle Native Artifacts to Release Output
+      shell: pwsh
+      run: |
+        Copy-Item -Path "target/release/sovereign_compressor.dll" -Destination "publish/" -Force
 
     # --- STEP 4: UPLOAD ARTIFACT BUNDLE ---
     - name: Upload Windows Executable & Native Core Artifacts
       uses: actions/upload-artifact@v4
       with:
-        name: SovereignVirtualSSD-Windows-x64
+        name: SnakeSageEngine-Windows-x64
         path: |
           publish/*.exe
           publish/*.dll
