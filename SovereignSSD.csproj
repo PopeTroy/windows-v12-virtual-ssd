@@ -5,8 +5,28 @@
     <TargetFramework>net8.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
+    
     <!-- CRITICAL: Enables native pointer memory operations for Rust FFI -->
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+
+    <!-- SNAKE SAGE ENGINE & SYSTEM METADATA -->
+    <AssemblyName>SnakeSageEngine</AssemblyName>
+    <RootNamespace>SnakeSageEngine</RootNamespace>
+    <Product>Snake Sage Virtual LPU Engine</Product>
+    <Company>Celsius Technology &amp; Media Group</Company>
+    <Version>1.0.0</Version>
+
+    <!-- PERFORMANCE OPTIMIZATIONS FOR ZERO-COPY VIRTUAL STORAGE -->
+    <ServerGarbageCollection>true</ServerGarbageCollection>
+    <ConcurrentGarbageCollection>true</ConcurrentGarbageCollection>
+    <Optimize>true</Optimize>
   </PropertyGroup>
+
+  <!-- AUTOMATICALLY COPY RUST NATIVE DLL TO OUTPUT BINARY DIRECTORY -->
+  <ItemGroup>
+    <None Update="sovereign_compressor.dll">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+  </ItemGroup>
 
 </Project>
