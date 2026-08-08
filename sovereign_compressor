@@ -1,0 +1,213 @@
+using System;
+using System.Buffers;
+using System.Runtime.InteropServices;
+
+namespace SovereignEngine.Native
+{
+    /// <summary>
+    /// Managed P/Invoke wrapper for native Rust sovereign_compressor dynamic library.
+    /// Uses ArrayPool<byte> memory rentals to ensure zero GC overhead during high-throughput execution.
+    /// </summary>
+    public static class SovereignCompressor
+    {
+        private const string LibraryName = "sovereign_compressor";
+
+        #region Native FFI Imports
+
+        private const int SOVEREIGN_SUCCESS = 0;
+        private const int SOVEREIGN_ERR_NULL_POINTER = -1;
+        private const int SOVEREIGN_ERR_BUFFER_TOO_SMALL = -2;
+        private const int SOVEREIGN_ERR_COMPRESSION_FAILED = -3;
+        private const int SOVEREIGN_ERR_DECOMPRESSION_FAILED = -4;
+        private const int SOVEREIGN_ERR_PANIC = -5;
+
+        [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl, EntryPoint = "sovereign_compress_chunk")]
+        private static unsafe extern int NativeCompressChunk(
+            byte* inputPtr,
+            UIntPtr inputLen,
+            byte* outPtr,
+            UIntPtr outCap,
+            UIntPtr* outWritten,
+            int compressionLevel
+        );
+
+        [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl, EntryPoint = "sovereign_decompress_chunk")]
+        private static unsafe extern int NativeDecompressChunk(
+            byte* inputPtr,
+            UIntPtr inputLen,
+            byte* outPtr,
+            UIntPtr outCap,
+            UIntPtr* outWritten
+        );
+
+        #endregion
+
+        #region Managed API
+
+        /// <summary>
+        /// Compresses input bytes using native Rust Zstd + Rayon pipeline.
+        /// </summary>
+        /// <param name="input">Source byte array or memory slice.</param>
+        /// <param name="compressionLevel">Zstd compression level (1-19, default 3).</param>
+        /// <returns>Compressed byte array payload.</returns>
+        public static unsafe byte[] Compress(ReadOnlySpan<byte> input, int compressionLevel = 3)
+        {
+            if (input.IsEmpty)
+            {
+                return Array.Empty<byte>();
+            }
+
+            // Estimate upper bound capacity for Zstd buffer allocation
+            int estimatedCapacity = GetMaxCompressedSize(input.Length);
+            byte[] rentedBuffer = ArrayPool<byte>.Shared.Rent(estimatedCapacity);
+
+            trychecked
+            {
+                fixed (byte* pInput = input)
+                fixed (byte* pOutput = rentedBuffer)
+                {
+                    UIntPtr outWritten = UIntPtr.Zero;
+
+                    int resultCode = NativeCompressChunk(
+                        pInput,
+                        (UIntPtr)input.Length,
+                        pOutput,
+                        (UIntPtr)rentedBuffer.Length,
+                        &outWritten,
+                        compressionLevel
+                    );
+
+                    // Retry with a larger buffer if initial bounds were exceeded
+                    if (resultCode == SOVEREIGN_ERR_BUFFER_TOO_SMALL)
+                    {
+                        ArrayPool<byte>.Shared.Return(rentedBuffer);
+                        rentedBuffer = ArrayPool<byte>.Shared.Rent(estimatedCapacity * 2);
+
+                        fixed (byte* pRetryOutput = rentedBuffer)
+                        {
+                            resultCode = NativeCompressChunk(
+                                pInput,
+                                (UIntPtr)input.Length,
+                                pRetryOutput,
+                                (UIntPtr)rentedBuffer.Length,
+                                &outWritten,
+                                compressionLevel
+                            );
+                        }
+                    }
+
+                    ThrowIfFailed(resultCode, "Compression failed");
+
+                    int actualBytesWritten = (int)outWritten;
+                    byte[] finalCompressed = new byte[actualBytesWritten];
+                    Buffer.BlockCopy(rentedBuffer, 0, finalCompressed, 0, actualBytesWritten);
+
+                    return finalCompressed;
+                }
+            }
+            finally
+            {
+                ArrayPool<byte>.Shared.Return(rentedBuffer);
+            }
+        }
+
+        /// <summary>
+        /// Decompresses Zstd-compressed payload back into original uncompressed memory.
+        /// </summary>
+        /// <param name="compressedInput">Compressed byte array or memory slice.</param>
+        /// <param name="expectedUncompressedSize">
+        /// Expected size of decompressed payload. Defaults to 4x compressed size if unknown.
+        /// </param>
+        /// <returns>Decompressed byte array.</returns>
+        public static unsafe byte[] Decompress(ReadOnlySpan<byte> compressedInput, int expectedUncompressedSize = 0)
+        {
+            if (compressedInput.IsEmpty)
+            {
+                return Array.Empty<byte>();
+            }
+
+            int initialCapacity = expectedUncompressedSize > 0 
+                ? expectedUncompressedSize 
+                : Math.Max(compressedInput.Length * 4, 64 * 1024);
+
+            byte[] rentedBuffer = ArrayPool<byte>.Shared.Rent(initialCapacity);
+
+            try
+            {
+                fixed (byte* pInput = compressedInput)
+                fixed (byte* pOutput = rentedBuffer)
+                {
+                    UIntPtr outWritten = UIntPtr.Zero;
+
+                    int resultCode = NativeDecompressChunk(
+                        pInput,
+                        (UIntPtr)compressedInput.Length,
+                        pOutput,
+                        (UIntPtr)rentedBuffer.Length,
+                        &outWritten
+                    );
+
+                    // Expand pooled buffer dynamically if decompressed payload exceeds target size
+                    while (resultCode == SOVEREIGN_ERR_BUFFER_TOO_SMALL)
+                    {
+                        int newCapacity = rentedBuffer.Length * 2;
+                        ArrayPool<byte>.Shared.Return(rentedBuffer);
+                        rentedBuffer = ArrayPool<byte>.Shared.Rent(newCapacity);
+
+                        fixed (byte* pExpandedOutput = rentedBuffer)
+                        {
+                            resultCode = NativeDecompressChunk(
+                                pInput,
+                                (UIntPtr)compressedInput.Length,
+                                pExpandedOutput,
+                                (UIntPtr)rentedBuffer.Length,
+                                &outWritten
+                            );
+                        }
+                    }
+
+                    ThrowIfFailed(resultCode, "Decompression failed");
+
+                    int actualBytesWritten = (int)outWritten;
+                    byte[] finalDecompressed = new byte[actualBytesWritten];
+                    Buffer.BlockCopy(rentedBuffer, 0, finalDecompressed, 0, actualBytesWritten);
+
+                    return finalDecompressed;
+                }
+            }
+            finally
+            {
+                ArrayPool<byte>.Shared.Return(rentedBuffer);
+            }
+        }
+
+        /// <summary>
+        /// Estimates worst-case compressed buffer capacity bound based on raw byte size.
+        /// </summary>
+        private static int GetMaxCompressedSize(int inputSize)
+        {
+            // Zstd bound: srcSize + (srcSize >> 8) + 128 bytes
+            return inputSize + (inputSize >> 8) + 512;
+        }
+
+        /// <summary>
+        /// Maps Native Rust FFI return codes to explicit C# Exceptions.
+        /// </summary>
+        private static void ThrowIfFailed(int code, string operationContext)
+        {
+            if (code == SOVEREIGN_SUCCESS) return;
+
+            throw code switch
+            {
+                SOVEREIGN_ERR_NULL_POINTER => new ArgumentNullException($"{operationContext}: Invalid null pointer passed across C-FFI boundary."),
+                SOVEREIGN_ERR_BUFFER_TOO_SMALL => new InvalidOperationException($"{operationContext}: Output memory buffer capacity was insufficient."),
+                SOVEREIGN_ERR_COMPRESSION_FAILED => new ExternalException($"{operationContext}: Native Zstd compression encoding error."),
+                SOVEREIGN_ERR_DECOMPRESSION_FAILED => new ExternalException($"{operationContext}: Native Zstd decompression decoding error."),
+                SOVEREIGN_ERR_PANIC => new ExternalException($"{operationContext}: Native Rust thread panicked inside unmanaged context."),
+                _ => new ExternalException($"{operationContext}: Unknown FFI failure code ({code}).")
+            };
+        }
+
+        #endregion
+    }
+}
