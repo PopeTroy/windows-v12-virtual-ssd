@@ -1,68 +1,96 @@
-name: Build Snake Sage Virtual LPU Engine
+name: Sovereign Compressor CI
 
 on:
   push:
-    branches: [ "main" ]
+    branches: [ main, master, develop ]
   pull_request:
-    branches: [ "main" ]
-  workflow_dispatch: # Enables manual "Run workflow" trigger in GitHub Actions UI
+    branches: [ main, master, develop ]
+
+env:
+  CARGO_TERM_COLOR: always
+  DOTNET_NOLOGO: true
+  DOTNET_CLI_TELEMETRY_OPTOUT: true
 
 jobs:
-  build:
-    runs-on: windows-latest
+  build-and-test:
+    name: Build & Test (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            artifact_name: libsovereign_compressor.so
+            rust_dylib_path: target/release/libsovereign_compressor.so
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            artifact_name: sovereign_compressor.dll
+            rust_dylib_path: target/release/sovereign_compressor.dll
 
     steps:
-    - uses: actions/checkout@v4
+      - name: Checkout Repository
+        uses: actions/checkout@v4
 
-    # --- STEP 1: RUST TOOLCHAIN & NATIVE DLL COMPILATION ---
-    - name: Setup Rust Toolchain
-      uses: dtolnay/rust-toolchain@stable
-      with:
-        targets: x86_64-pc-windows-msvc
+      # ---------------------------------------------------------------------
+      # 1. SETUP TOOLCHAINS (RUST & .NET)
+      # ---------------------------------------------------------------------
+      - name: Install Rust Toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
 
-    - name: Build Rust Native Edge Compressor DLL
-      run: cargo build --release
+      - name: Setup Rust Cache
+        uses: Swatinem/rust-cache@v2
 
-    # --- STEP 2: .NET 8 SETUP & DEPENDENCY RESTORE ---
-    - name: Setup .NET 8
-      uses: actions/setup-dotnet@v4
-      with:
-        dotnet-version: 8.0.x
+      - name: Setup .NET SDK
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
 
-    - name: Restore C# Dependencies
-      run: dotnet restore SnakeSageEngine.csproj
+      # ---------------------------------------------------------------------
+      # 2. BUILD NATIVE RUST DYLIB
+      # ---------------------------------------------------------------------
+      - name: Build Rust Engine (Release)
+        run: cargo build --release --target ${{ matrix.target }}
 
-    # Stage the compiled Rust DLL from target/release into C# bin folder for local runtime testing
-    - name: Stage Sovereign Compressor DLL for Local Runtime
-      shell: pwsh
-      run: |
-        New-Item -ItemType Directory -Force -Path "bin/Release/net8.0/"
-        Copy-Item -Path "target/release/sovereign_compressor.dll" -Destination "bin/Release/net8.0/" -Force
+      - name: Verify Compiled Native Library Exists
+        shell: bash
+        run: |
+          if [ ! -f "${{ matrix.rust_dylib_path }}" ]; then
+            echo "Error: Compiled artifact not found at ${{ matrix.rust_dylib_path }}"
+            exit 1
+          fi
 
-    - name: Build Snake Sage Engine
-      run: dotnet build SnakeSageEngine.csproj --configuration Release --no-restore
+      # ---------------------------------------------------------------------
+      # 3. STAGE NATIVE BINARY FOR DOTNET P/INVOKE
+      # ---------------------------------------------------------------------
+      - name: Copy Native Library to Test Output Directories
+        shell: bash
+        run: |
+          # Create target bin directories for dotnet test lookup
+          mkdir -p SovereignEngine.Tests/bin/Release/net8.0/
+          mkdir -p SovereignEngine.Tests/bin/Debug/net8.0/
+          
+          # Copy dylib into test runner execution context
+          cp ${{ matrix.rust_dylib_path }} SovereignEngine.Tests/bin/Release/net8.0/
+          cp ${{ matrix.rust_dylib_path }} SovereignEngine.Tests/bin/Debug/net8.0/
 
-    - name: Test Pipeline Compilation & LPU Initialization
-      env:
-        SNAKE_SAGE_LPU_COUNT: "6"
-        KURAMA_MAX_BUDGET_USD: "9.00"
-      run: dotnet run --project SnakeSageEngine.csproj --no-build --configuration Release -- --lpu-states=6
+      # ---------------------------------------------------------------------
+      # 4. RUN C# XUNIT TESTS & CARGO BENCH MARKS
+      # ---------------------------------------------------------------------
+      - name: Run .NET Unit Tests
+        run: dotnet test SovereignEngine.Tests/SovereignEngine.Tests.csproj --configuration Release --logger "console;verbosity=detailed"
 
-    # --- STEP 3: PUBLISH STANDALONE EXECUTABLE & STAGE DLL BUNDLE ---
-    - name: Publish Standalone Executable
-      run: dotnet publish SnakeSageEngine.csproj --configuration Release -r win-x64 --self-contained true -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -o publish/
+      - name: Verify Cargo Benchmarks Compile
+        run: cargo bench --no-run
 
-    # Copy native Rust DLL and UAC manifest into the publish output folder
-    - name: Bundle Native Artifacts to Release Output
-      shell: pwsh
-      run: |
-        Copy-Item -Path "target/release/sovereign_compressor.dll" -Destination "publish/" -Force
-
-    # --- STEP 4: UPLOAD ARTIFACT BUNDLE ---
-    - name: Upload Windows Executable & Native Core Artifacts
-      uses: actions/upload-artifact@v4
-      with:
-        name: SnakeSageEngine-Windows-x64
-        path: |
-          publish/*.exe
-          publish/*.dll
+      # ---------------------------------------------------------------------
+      # 5. UPLOAD NATIVE BUILD ARTIFACTS
+      # ---------------------------------------------------------------------
+      - name: Upload Native Dylib Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: native-sovereign-compressor-${{ matrix.os }}
+          path: ${{ matrix.rust_dylib_path }}
+          if-no-files-found: error
