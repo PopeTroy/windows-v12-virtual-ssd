@@ -9,6 +9,9 @@
     <AssemblyName>SovereignSSD</AssemblyName>
     <RootNamespace>SovereignSSD</RootNamespace>
     
+    <!-- Explicitly set primary entry point class to resolve CS0017 -->
+    <StartupObject>SovereignSSD.Program</StartupObject>
+
     <!-- Build Targets & Single-File Packaging -->
     <RuntimeIdentifier>win-x64</RuntimeIdentifier>
     <ApplicationManifest>src/App.manifest</ApplicationManifest>
