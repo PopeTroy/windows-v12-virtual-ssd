@@ -9,13 +9,19 @@
     <AssemblyName>SovereignSSD</AssemblyName>
     <RootNamespace>SovereignSSD</RootNamespace>
     
-    <!-- Build Targets & Packaging -->
+    <!-- Build Targets & Single-File Packaging -->
     <RuntimeIdentifier>win-x64</RuntimeIdentifier>
     <ApplicationManifest>src/App.manifest</ApplicationManifest>
     <PublishSingleFile>true</PublishSingleFile>
     <SelfContained>true</SelfContained>
     <EnableCompressionInSingleFile>true</EnableCompressionInSingleFile>
   </PropertyGroup>
+
+  <ItemGroup>
+    <Compile Include="sovereign_compressor.cs" />
+    <Compile Include="SovereignCompressorTests.cs" />
+    <Compile Include="src\Program.cs" />
+  </ItemGroup>
 
   <ItemGroup>
     <None Include="sovereign_compressor.dll">
