@@ -1,155 +1,130 @@
-use rayon::prelude::*;
-use std::io::Read;
-use std::panic::catch_unwind;
 use std::slice;
-use zstd::stream::decoder::Decoder;
-use zstd::stream::encode_all;
+use std::panic;
+use std::ptr;
+use zstd::stream::{encode_all, decode_all};
+use rayon::prelude::*;
 
-/// Standard chunk size for parallel processing (512 KB per chunk)
-const PARALLEL_CHUNK_SIZE: usize = 512 * 1024;
+/// FFI Error Codes
+pub const SOVEREIGN_SUCCESS: i32 = 0;
+pub const SOVEREIGN_ERR_NULL_POINTER: i32 = -1;
+pub const SOVEREIGN_ERR_BUFFER_TOO_SMALL: i32 = -2;
+pub const SOVEREIGN_ERR_COMPRESSION_FAILED: i32 = -3;
+pub const SOVEREIGN_ERR_DECOMPRESSION_FAILED: i32 = -4;
+pub const SOVEREIGN_ERR_PANIC: i32 = -5;
 
-/// Native C-FFI function to compress byte chunks using Zstandard + Rayon parallel execution.
-/// Returns squeezed byte length (>0) on success, or a negative error code on failure.
-/// Error Codes:
-///  -1 = Invalid or Null Pointer
-///  -2 = Output Buffer Overflow Prevention
-///  -3 = Zstandard Compression Failure
-///  -4 = Internal Panic Caught at Boundary
+/// Compresses a raw input byte array into the destination buffer using Zstandard and Rayon.
+/// 
+/// # Safety
+/// - `input_ptr` must point to valid memory of at least `input_len` bytes.
+/// - `out_ptr` must point to valid writable memory of at least `out_cap` bytes.
+/// - `out_written` must be a valid non-null pointer to write the actual byte length output.
 #[no_mangle]
-pub extern "C" fn sovereign_compress_chunk(
+pub unsafe extern "C" fn sovereign_compress_chunk(
     input_ptr: *const u8,
     input_len: usize,
-    output_ptr: *mut u8,
-    max_output_len: usize,
+    out_ptr: *mut u8,
+    out_cap: usize,
+    out_written: *mut usize,
     compression_level: i32,
-) -> i64 {
-    // Prevent Rust panics from unwinding across the C-FFI boundary into C#
-    let result = catch_unwind(|| {
-        // Null pointer check
-        if input_ptr.is_null() || output_ptr.is_null() {
-            return -1; // Error: Invalid pointer
-        }
+) -> i32 {
+    if input_ptr.is_null() || out_ptr.is_null() || out_written.is_null() {
+        return SOVEREIGN_ERR_NULL_POINTER;
+    }
 
-        if input_len == 0 {
-            return 0; // Success: Zero bytes compressed
-        }
+    if input_len == 0 {
+        *out_written = 0;
+        return SOVEREIGN_SUCCESS;
+    }
 
-        let input_data = unsafe { slice::from_raw_parts(input_ptr, input_len) };
+    let panic_result = panic::catch_unwind(|| {
+        let input_slice = slice::from_raw_parts(input_ptr, input_len);
 
-        // For small payloads under threshold, compress sequentially
-        if input_len <= PARALLEL_CHUNK_SIZE {
-            match encode_all(input_data, compression_level) {
-                Ok(compressed_bytes) => {
-                    if compressed_bytes.len() > max_output_len {
-                        return -2; // Error: Buffer overflow prevention
-                    }
+        // Utilize Rayon parallel chunk processing for large payloads (>1MB)
+        let compressed_bytes = if input_len > 1_048_576 {
+            let chunk_size = 524_288; // 512 KB chunks
+            let chunks: Vec<&[u8]> = input_slice.chunks(chunk_size).collect();
 
-                    unsafe {
-                        std::ptr::copy_nonoverlapping(
-                            compressed_bytes.as_ptr(),
-                            output_ptr,
-                            compressed_bytes.len(),
-                        );
-                    }
-
-                    compressed_bytes.len() as i64
-                }
-                Err(_) => -3, // Error: Compression failure
-            }
-        } else {
-            // High-throughput parallel chunked compression using Rayon
-            let chunk_results: Result<Vec<Vec<u8>>, _> = input_data
-                .par_chunks(PARALLEL_CHUNK_SIZE)
-                .map(|chunk| encode_all(chunk, compression_level))
+            let processed_chunks: Result<Vec<Vec<u8>>, _> = chunks
+                .par_iter()
+                .map(|chunk| encode_all(*chunk, compression_level))
                 .collect();
 
-            match chunk_results {
-                Ok(compressed_chunks) => {
-                    let total_len: usize = compressed_chunks.iter().map(|c| c.len()).sum();
-
-                    if total_len > max_output_len {
-                        return -2; // Error: Buffer overflow prevention
-                    }
-
-                    let mut offset = 0;
-                    for chunk in compressed_chunks {
-                        unsafe {
-                            std::ptr::copy_nonoverlapping(
-                                chunk.as_ptr(),
-                                output_ptr.add(offset),
-                                chunk.len(),
-                            );
-                        }
-                        offset += chunk.len();
-                    }
-
-                    total_len as i64
-                }
-                Err(_) => -3, // Error: Compression failure
+            match processed_chunks {
+                Ok(vecs) => vecs.concat(),
+                Err(_) => return Err(SOVEREIGN_ERR_COMPRESSION_FAILED),
             }
+        } else {
+            match encode_all(input_slice, compression_level) {
+                Ok(data) => data,
+                Err(_) => return Err(SOVEREIGN_ERR_COMPRESSION_FAILED),
+            }
+        };
+
+        if compressed_bytes.len() > out_cap {
+            return Err(SOVEREIGN_ERR_BUFFER_TOO_SMALL);
         }
+
+        ptr::copy_nonoverlapping(compressed_bytes.as_ptr(), out_ptr, compressed_bytes.len());
+        *out_written = compressed_bytes.len();
+
+        Ok(SOVEREIGN_SUCCESS)
     });
 
-    match result {
-        Ok(code) => code,
-        Err(_) => -4, // Error: Panic caught at C-FFI boundary
+    match panic_result {
+        Ok(res) => match res {
+            Ok(code) => code,
+            Err(err_code) => err_code,
+        },
+        Err(_) => SOVEREIGN_ERR_PANIC,
     }
 }
 
-/// Native C-FFI function to decompress Zstandard streams back into uncompressed memory.
-/// Returns decompressed byte length (>0) on success, or a negative error code on failure.
-/// Error Codes:
-///  -1 = Invalid or Null Pointer
-///  -2 = Output Buffer Overflow Prevention
-///  -3 = Zstandard Decompression Failure / Corrupted Payload
-///  -4 = Internal Panic Caught at Boundary
+/// Decompresses a Zstandard compressed payload back into uncompressed memory.
+/// 
+/// # Safety
+/// - `input_ptr` must point to valid compressed memory of at least `input_len` bytes.
+/// - `out_ptr` must point to valid writable memory of at least `out_cap` bytes.
+/// - `out_written` must be a valid non-null pointer to receive the decompressed byte count.
 #[no_mangle]
-pub extern "C" fn sovereign_decompress_chunk(
+pub unsafe extern "C" fn sovereign_decompress_chunk(
     input_ptr: *const u8,
     input_len: usize,
-    output_ptr: *mut u8,
-    max_output_len: usize,
-) -> i64 {
-    let result = catch_unwind(|| {
-        // Null pointer check
-        if input_ptr.is_null() || output_ptr.is_null() {
-            return -1; // Error: Invalid pointer
+    out_ptr: *mut u8,
+    out_cap: usize,
+    out_written: *mut usize,
+) -> i32 {
+    if input_ptr.is_null() || out_ptr.is_null() || out_written.is_null() {
+        return SOVEREIGN_ERR_NULL_POINTER;
+    }
+
+    if input_len == 0 {
+        *out_written = 0;
+        return SOVEREIGN_SUCCESS;
+    }
+
+    let panic_result = panic::catch_unwind(|| {
+        let input_slice = slice::from_raw_parts(input_ptr, input_len);
+
+        let decompressed_bytes = match decode_all(input_slice) {
+            Ok(data) => data,
+            Err(_) => return Err(SOVEREIGN_ERR_DECOMPRESSION_FAILED),
+        };
+
+        if decompressed_bytes.len() > out_cap {
+            return Err(SOVEREIGN_ERR_BUFFER_TOO_SMALL);
         }
 
-        if input_len == 0 {
-            return 0; // Success: Zero bytes decompressed
-        }
+        ptr::copy_nonoverlapping(decompressed_bytes.as_ptr(), out_ptr, decompressed_bytes.len());
+        *out_written = decompressed_bytes.len();
 
-        let compressed_data = unsafe { slice::from_raw_parts(input_ptr, input_len) };
-
-        // Process single frame or multi-chunk streams seamlessly via Zstandard Decoder
-        match Decoder::new(compressed_data) {
-            Ok(mut decoder) => {
-                let mut decompressed_buffer = Vec::new();
-                if decoder.read_to_end(&mut decompressed_buffer).is_err() {
-                    return -3; // Error: Decompression streaming failed
-                }
-
-                if decompressed_buffer.len() > max_output_len {
-                    return -2; // Error: Output buffer overflow prevention
-                }
-
-                unsafe {
-                    std::ptr::copy_nonoverlapping(
-                        decompressed_buffer.as_ptr(),
-                        output_ptr,
-                        decompressed_buffer.len(),
-                    );
-                }
-
-                decompressed_buffer.len() as i64
-            }
-            Err(_) => -3, // Error: Invalid Zstandard header or payload corrupted
-        }
+        Ok(SOVEREIGN_SUCCESS)
     });
 
-    match result {
-        Ok(code) => code,
-        Err(_) => -4, // Error: Panic caught at C-FFI boundary
+    match panic_result {
+        Ok(res) => match res {
+            Ok(code) => code,
+            Err(err_code) => err_code,
+        },
+        Err(_) => SOVEREIGN_ERR_PANIC,
     }
 }
