@@ -1,4 +1,4 @@
-name: Sovereign Engine Integration Pipeline
+name: Sovereign Engine Build & Windows Executable Release
 
 on:
   push:
@@ -7,25 +7,35 @@ on:
     branches: [ "main" ]
 
 jobs:
-  build-and-test:
-    runs-on: ubuntu-latest
+  build-windows-app:
+    runs-on: windows-latest
 
     steps:
     - uses: actions/checkout@v4
 
     - name: Setup Rust Toolchain
       uses: dtolnay/rust-toolchain@stable
+      with:
+        targets: x86_64-pc-windows-msvc
 
-    - name: Build Rust Library
-      run: cargo build --release
+    - name: Build Native Rust Engine DLL
+      run: cargo build --release --target x86_64-pc-windows-msvc
 
-    - name: Execute Native Rust Tests
-      run: cargo test --release
+    - name: Move Compiled DLL to Project Root
+      run: |
+        copy target\x86_64-pc-windows-msvc\release\sovereign_compressor.dll .\sovereign_compressor.dll
 
     - name: Setup .NET 8 SDK
       uses: actions/setup-dotnet@v3
       with:
         dotnet-version: '8.0.x'
 
-    - name: Execute C# Unit Test Suite
-      run: dotnet test SovereignSSD.csproj --configuration Release
+    - name: Publish Self-Contained Windows Executable
+      run: |
+        dotnet publish SovereignSSD.csproj -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -o ./publish
+
+    - name: Upload Windows Executable Artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: SovereignSSD-Windows-v12-Executable
+        path: ./publish/SovereignSSD.exe
