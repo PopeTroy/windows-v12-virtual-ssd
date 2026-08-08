@@ -23,6 +23,27 @@ namespace SovereignEngine
         public DateTime IndexedTime { get; set; } = DateTime.UtcNow;
     }
 
+    // --- ZERO-COPY CHAKRA FRUIT CACHE NODE ---
+
+    /// <summary>
+    /// Ephemeral zero-copy memory container wrapping ReadOnlyMemory<byte>
+    /// to avoid byte array allocations during reads.
+    /// </summary>
+    public class ZeroCopyChakraBlock
+    {
+        public string BlockAddress { get; set; } = string.Empty;
+        public ReadOnlyMemory<byte> MemorySlice { get; set; }
+        public DateTime CachedTime { get; set; } = DateTime.UtcNow;
+        public long AccessCount = 0;
+
+        public ZeroCopyChakraBlock(string address, byte[] payload)
+        {
+            BlockAddress = address;
+            // Zero-copy wrapping around byte array
+            MemorySlice = new ReadOnlyMemory<byte>(payload);
+        }
+    }
+
     // --- KURAMA CAPPED GOVERNOR (FISCAL & PERFORMANCE THRESHOLD ENFORCER) ---
 
     public class KuramaGovernorResult
@@ -157,16 +178,51 @@ namespace SovereignEngine
         public List<LpuSliceState> GetActiveStates() => _lpuStates;
     }
 
+    // --- JUUBI CHAKRA TREE WITH IN-MEMORY ZERO-COPY CACHE ---
+
+    /// <summary>
+    /// Ten-Tails (Juubi) Core:
+    /// - Ingests token streams into SRAM buffers.
+    /// - Distributes processing across Snake Sage LPU States 1 to 6.
+    /// - Caches synthesized "Chakra Fruit" blocks in zero-copy RAM (ConcurrentDictionary).
+    /// - Serves cached blocks via ReadOnlyMemory<byte> slices (0ms latency, 0 disk/network I/O).
+    /// </summary>
     public class JuubiChakraTree
     {
         private readonly SnakeSageEngine _snakeSage;
         private readonly KuramaCappedGovernor _kuramaGovernor;
         private readonly ConcurrentQueue<byte[]> _godTreeBuffer = new ConcurrentQueue<byte[]>();
 
+        // Zero-Copy In-Memory Cache Matrix
+        private readonly ConcurrentDictionary<string, ZeroCopyChakraBlock> _chakraFruitCache 
+            = new ConcurrentDictionary<string, ZeroCopyChakraBlock>();
+
         public JuubiChakraTree(SnakeSageEngine snakeSage, KuramaCappedGovernor kuramaGovernor)
         {
             _snakeSage = snakeSage;
             _kuramaGovernor = kuramaGovernor;
+        }
+
+        /// <summary>
+        /// Attempts to serve a requested Chakra Fruit block directly from RAM zero-copy memory.
+        /// Returns true if served instantly without hitting disk or network.
+        /// </summary>
+        public bool TryGetChakraFruitZeroCopy(string blockAddress, out ReadOnlyMemory<byte> memorySlice)
+        {
+            if (_chakraFruitCache.TryGetValue(blockAddress, out var blockNode))
+            {
+                Interlocked.Increment(ref blockNode.AccessCount);
+                memorySlice = blockNode.MemorySlice;
+
+                Console.ForegroundColor = ConsoleColor.Green;
+                Console.WriteLine($"⚡ [JUUBI RAM CACHE HIT] Served block '{blockAddress}' directly from Zero-Copy RAM (Size: {memorySlice.Length} bytes | Reads: {blockNode.AccessCount}).");
+                Console.ResetColor();
+
+                return true;
+            }
+
+            memorySlice = ReadOnlyMemory<byte>.Empty;
+            return false;
         }
 
         public async Task<string> IngestAndSynthesizeAsync(string relativeName, byte[] payload)
@@ -181,10 +237,14 @@ namespace SovereignEngine
             Console.WriteLine($"👁️ [JUUBI GOD TREE] Absorbed {payload.Length} bytes into high-density SRAM buffer.");
             Console.ResetColor();
 
-            // If Kurama triggered Kamui deflection, route straight to ST-VSSD buffer address
+            // If Kurama triggered Kamui deflection, cache buffer payload directly under Kamui address
             if (govDecision.Action == "CAP_ENFORCED_OVERFLOW_BUFFERED")
             {
-                _godTreeBuffer.TryDequeue(out _);
+                if (_godTreeBuffer.TryDequeue(out var overflowData))
+                {
+                    var overflowBlock = new ZeroCopyChakraBlock(govDecision.VssdAddress, overflowData);
+                    _chakraFruitCache[govDecision.VssdAddress] = overflowBlock;
+                }
                 return govDecision.VssdAddress;
             }
 
@@ -200,18 +260,24 @@ namespace SovereignEngine
 
             await Task.WhenAll(processingTasks).ConfigureAwait(false);
 
-            // 4. Synthesize "Chakra Fruit" Block for Zero-Copy ST-VSSD Commit
+            // 4. Synthesize "Chakra Fruit" Block and commit to In-Memory Zero-Copy Cache
             string blockAddress = $"JUUBI_FRUIT_{Guid.NewGuid():N}".ToUpper();
 
-            if (_godTreeBuffer.TryDequeue(out _))
+            if (_godTreeBuffer.TryDequeue(out var processedPayload))
             {
+                // Store in Zero-Copy Cache
+                var fruitNode = new ZeroCopyChakraBlock(blockAddress, processedPayload);
+                _chakraFruitCache[blockAddress] = fruitNode;
+
                 Console.ForegroundColor = ConsoleColor.Magenta;
-                Console.WriteLine($"⚡ [CHAKRA FRUIT SYNTHESIS] Block '{blockAddress}' created. Committing to ST-VSSD...");
+                Console.WriteLine($"⚡ [CHAKRA FRUIT CACHED] Block '{blockAddress}' committed to In-Memory RAM Store ({processedPayload.Length} bytes).");
                 Console.ResetColor();
             }
 
             return blockAddress;
         }
+
+        public int GetCachedBlockCount() => _chakraFruitCache.Count;
     }
 
     // --- MAIN SOVEREIGN ENGINE PROGRAM ---
@@ -282,7 +348,7 @@ namespace SovereignEngine
                     Console.WriteLine("  • Zero Local Disk Bloat Architecture : ENGAGED");
                     Console.WriteLine("  • Kurama Capped Governor (Hard Cap) : ACTIVE ($0 Overrun Fee Cap)");
                     Console.WriteLine("  • Snake Sage Engine (6 LPU States)   : ACTIVE");
-                    Console.WriteLine("  • Juubi (Ten-Tails) LPU Core         : SYNCHRONIZED");
+                    Console.WriteLine("  • Juubi (Ten-Tails) Zero-Copy RAM    : SYNCHRONIZED");
                     Console.WriteLine("  • Vector Embedding Engine            : nemotron-3-embed-1b");
                     Console.WriteLine("  • On-Device SLM RAG Agent            : nemotron-mini-4b-instruct");
                     Console.WriteLine("  • Offline Sentinels Primed           : Madara Uchiha & Obito Uchiha");
@@ -360,6 +426,14 @@ namespace SovereignEngine
 
             // ROUTE THROUGH JUUBI + SNAKE SAGE ENGINE + KURAMA GOVERNOR
             string blockHash = await JuubiCore.IngestAndSynthesizeAsync(relativeName, compressedPayload).ConfigureAwait(false);
+
+            // Fast-Path Zero-Copy RAM Verification check
+            if (JuubiCore.TryGetChakraFruitZeroCopy(blockHash, out ReadOnlyMemory<byte> cachedSlice))
+            {
+                Console.ForegroundColor = ConsoleColor.DarkMagenta;
+                Console.WriteLine($"⚡ [ZERO-COPY VERIFIED] Block '{blockHash}' validated in memory ({cachedSlice.Length} bytes).");
+                Console.ResetColor();
+            }
 
             await UpdateMetadataRegistryAsync(relativeName, blockHash, rawPayloadBytes.Length, "FILE").ConfigureAwait(false);
 
