@@ -18,13 +18,7 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <Compile Include="sovereign_compressor.cs" />
-    <Compile Include="SovereignCompressorTests.cs" />
-    <Compile Include="src\Program.cs" />
-  </ItemGroup>
-
-  <ItemGroup>
-    <None Include="sovereign_compressor.dll">
+    <None Include="sovereign_compressor.dll" Condition="Exists('sovereign_compressor.dll')">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>
   </ItemGroup>
