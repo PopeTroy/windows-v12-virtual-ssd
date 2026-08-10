@@ -1,7 +1,7 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
-    <OutputType>WinExe</OutputType>
+    <OutputType>Exe</OutputType>
     <TargetFramework>net8.0-windows</TargetFramework>
     <UseWPF>true</UseWPF>
     <ImplicitUsings>enable</ImplicitUsings>
@@ -10,8 +10,8 @@
     <AssemblyName>SovereignSSD</AssemblyName>
     <RootNamespace>SovereignSSD</RootNamespace>
 
-    <!-- Explicit Entry Point for WPF Application -->
-    <StartupObject>SovereignSSD.App</StartupObject>
+    <!-- Entry point configured specifically for Console Engine Execution -->
+    <StartupObject>SovereignSSD.Program</StartupObject>
 
     <!-- Build Targets & Single-File Packaging -->
     <RuntimeIdentifier>win-x64</RuntimeIdentifier>
@@ -20,6 +20,7 @@
     <SelfContained>true</SelfContained>
     <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
     <EnableCompressionInSingleFile>true</EnableCompressionInSingleFile>
+    <GenerateAppInstallerFile>false</GenerateAppInstallerFile>
   </PropertyGroup>
 
   <!-- Embed native Rust DLL into the single .exe payload -->
