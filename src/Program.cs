@@ -263,6 +263,13 @@ namespace SovereignSSD
                 return;
             }
 
+            // ENSURE PARENT DIRECTORIES EXIST ON CLOUD BEFORE UPLOADING
+            string? parentDir = Path.GetDirectoryName(relativePath);
+            if (!string.IsNullOrEmpty(parentDir) && parentDir != "." && parentDir != "/")
+            {
+                await EnsureRemoteDirectoryPathAsync(parentDir);
+            }
+
             // Tactic: Kawarimi Instant Response Stub
             ShinobiTactics.RegisterKawarimiDeception(localPath);
 
@@ -329,6 +336,19 @@ namespace SovereignSSD
                     SafeLog($"[STREAMING ERROR] {relativePath}: {ex.Message}", ConsoleColor.Red);
                 }
             });
+        }
+
+        private static async Task EnsureRemoteDirectoryPathAsync(string directoryPath)
+        {
+            string normalized = NormalizeVirtualPath(directoryPath);
+            string[] parts = normalized.Split('/', StringSplitOptions.RemoveEmptyEntries);
+            string currentPath = "";
+
+            foreach (string part in parts)
+            {
+                currentPath = string.IsNullOrEmpty(currentPath) ? part : $"{currentPath}/{part}";
+                await PuterFS_MkdirAsync(currentPath);
+            }
         }
 
         private static async Task StreamToCloudWithProgressBarAsync(string action, string virtualPath, byte[] payload)
