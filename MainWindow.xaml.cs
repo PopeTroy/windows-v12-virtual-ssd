@@ -10,7 +10,7 @@ namespace SovereignSSD
 {
     public partial class MainWindow : Window
     {
-        private const string PUTER_FS_ENDPOINT = "https://info@celsiusmediagroup.co.za/puterfs";
+        private const string PUTER_FS_ENDPOINT = "https://celsiusmediagroup.co.za/puterfs";
         private const long TOTAL_CLOUD_CAPACITY_BYTES = 100L * 1024L * 1024L * 1024L; // 100 GB Virtual Limit
         
         private static readonly HttpClient HttpClient = new HttpClient { Timeout = TimeSpan.FromHours(2) };
@@ -128,7 +128,7 @@ namespace SovereignSSD
             }
             catch (Exception ex)
             {
-                TxtStatus.Text = $"Directory Sync Error: {ex.Message}";
+                TxtStatus.Text = $"Directory Sync Warning: {ex.Message}";
             }
         }
 
@@ -161,7 +161,6 @@ namespace SovereignSSD
                 var response = await HttpClient.PostAsync(PUTER_FS_ENDPOINT, content);
                 response.EnsureSuccessStatusCode();
 
-                // Zero-Weight local file wipe
                 if (File.Exists(localFile))
                 {
                     File.Delete(localFile);
@@ -191,8 +190,7 @@ namespace SovereignSSD
                 content.Add(new StringContent("MKDIR"), "action");
                 content.Add(new StringContent(virtualDirPath), "virtualPath");
 
-                var response = await HttpClient.PostAsync(PUTER_FS_ENDPOINT, content);
-                response.EnsureSuccessStatusCode();
+                await HttpClient.PostAsync(PUTER_FS_ENDPOINT, content);
             }
             catch
             {
