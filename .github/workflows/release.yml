@@ -1,54 +1,47 @@
-name: Sovereign Engine Build & Windows Installer
+name: Build and Package SovereignSSD V12
 
 on:
   push:
-    branches: [ "main" ]
+    branches: [ "main", "master" ]
   pull_request:
-    branches: [ "main" ]
+    branches: [ "main", "master" ]
 
 jobs:
-  build-windows-installer:
+  build:
     runs-on: windows-latest
 
     steps:
-    - uses: actions/checkout@v4
+    - name: Checkout Code
+      uses: actions/checkout@v4
 
-    - name: Setup Rust Toolchain
-      uses: dtolnay/rust-toolchain@stable
-      with:
-        targets: x86_64-pc-windows-msvc
-
-    - name: Build Native Rust Engine DLL
-      run: cargo build --release --target x86_64-pc-windows-msvc
-
-    - name: Copy Compiled DLL to Root
-      run: |
-        copy target\x86_64-pc-windows-msvc\release\sovereign_compressor.dll .\sovereign_compressor.dll
-
-    - name: Setup .NET 8 SDK
-      uses: actions/setup-dotnet@v3
+    - name: Setup .NET
+      uses: actions/setup-dotnet@v4
       with:
         dotnet-version: '8.0.x'
 
-    - name: Publish Self-Contained Windows Executable
-      run: |
-        dotnet publish SovereignSSD.csproj -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -p:StartupObject=SovereignSSD.Program -o ./publish
+    - name: Restore Dependencies
+      run: dotnet restore SovereignSSD.csproj
 
-    - name: Ensure DLL is in Publish Output
-      run: |
-        copy sovereign_compressor.dll publish\sovereign_compressor.dll
+    - name: Publish SovereignSSD Binary
+      run: >
+        dotnet publish SovereignSSD.csproj 
+        -c Release 
+        -r win-x64 
+        --self-contained true 
+        -p:PublishSingleFile=true 
+        -p:IncludeNativeLibrariesForSelfExtract=true 
+        -p:StartupObject=SovereignSSD.Program 
+        -o ./publish
 
-    - name: Install Inno Setup via Chocolatey
-      run: |
-        choco install innosetup --no-progress -y
-        echo "C:\Program Files (x86)\Inno Setup 6" >> $env:GITHUB_PATH
+    - name: Install Inno Setup
+      run: choco install innosetup -y
 
-    - name: Compile Windows Setup Installer
-      run: |
-        & "C:\Program Files (x86)\Inno Setup 6\iscc.exe" installer.iss
+    - name: Build Installer with Inno Setup
+      run: ISCC.exe setup.iss
 
-    - name: Upload Windows Setup Installer Artifact
+    - name: Upload Installer Artifact
       uses: actions/upload-artifact@v4
       with:
-        name: SovereignSSD-Windows-v12-Installer
+        name: SovereignSSD-Setup-v12
         path: Output/SovereignSSD-Setup-v12.exe
+        if-no-files-found: error
