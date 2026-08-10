@@ -2,15 +2,16 @@
 
   <PropertyGroup>
     <OutputType>WinExe</OutputType>
-    <TargetFramework>net8.0</TargetFramework>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <UseWPF>true</UseWPF>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <AssemblyName>SovereignSSD</AssemblyName>
     <RootNamespace>SovereignSSD</RootNamespace>
-    
-    <!-- Explicit Entry Point to avoid CS0017 -->
-    <StartupObject>SovereignSSD.Program</StartupObject>
+
+    <!-- Explicit Entry Point for WPF Application -->
+    <StartupObject>SovereignSSD.App</StartupObject>
 
     <!-- Build Targets & Single-File Packaging -->
     <RuntimeIdentifier>win-x64</RuntimeIdentifier>
