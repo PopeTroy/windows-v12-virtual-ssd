@@ -1,4 +1,4 @@
-name: Sovereign Engine Build & Windows Executable Release
+name: Sovereign Engine Build & Windows Installer
 
 on:
   push:
@@ -7,7 +7,7 @@ on:
     branches: [ "main" ]
 
 jobs:
-  build-windows-app:
+  build-windows-installer:
     runs-on: windows-latest
 
     steps:
@@ -21,7 +21,7 @@ jobs:
     - name: Build Native Rust Engine DLL
       run: cargo build --release --target x86_64-pc-windows-msvc
 
-    - name: Move Compiled DLL to Project Root
+    - name: Copy Compiled DLL to Root & Publish Folder
       run: |
         copy target\x86_64-pc-windows-msvc\release\sovereign_compressor.dll .\sovereign_compressor.dll
 
@@ -32,10 +32,19 @@ jobs:
 
     - name: Publish Self-Contained Windows Executable
       run: |
-        dotnet publish SovereignSSD.csproj -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -o ./publish
+        dotnet publish SovereignSSD.csproj -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -p:StartupObject=SovereignSSD.Program -o ./publish
 
-    - name: Upload Windows Executable Artifact
+    - name: Ensure DLL is in Publish Output
+      run: |
+        copy sovereign_compressor.dll publish\sovereign_compressor.dll
+
+    - name: Build Windows Setup Installer (Inno Setup)
+      uses: windsock-io/inno-setup-action@v1
+      with:
+        filepath: installer.iss
+
+    - name: Upload Windows Setup Installer Artifact
       uses: actions/upload-artifact@v4
       with:
-        name: SovereignSSD-Windows-v12-Executable
-        path: ./publish/SovereignSSD.exe
+        name: SovereignSSD-Windows-v12-Installer
+        path: Output/SovereignSSD-Setup-v12.exe
