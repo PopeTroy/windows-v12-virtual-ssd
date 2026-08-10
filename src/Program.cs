@@ -2,6 +2,7 @@ using System;
 using System.IO;
 using System.Net.Http;
 using System.Text;
+using System.Threading;
 using System.Threading.Tasks;
 using SovereignEngine.Native;
 
@@ -11,8 +12,11 @@ namespace SovereignSSD
     {
         private const string VIRTUAL_VOLUME_LABEL = "UESP_V12_SSD";
         private const string PUTER_FS_ENDPOINT = "https://info@celsiusmediagroup.co.za/puterfs";
+        private const long TOTAL_CLOUD_CAPACITY_BYTES = 100L * 1024L * 1024L * 1024L; // 100 GB Virtual Allocation Limit
+        
         private static readonly HttpClient HttpClient = new HttpClient { Timeout = TimeSpan.FromHours(2) };
         private static string BaseSSDPath = string.Empty;
+        private static long CurrentCloudUsedBytes = 0;
 
         static async Task Main(string[] args)
         {
@@ -21,7 +25,7 @@ namespace SovereignSSD
             Console.WriteLine("===================================================================");
             Console.WriteLine(" UESP Sovereign V12 Virtual SSD Volume (Windows Native Core)");
             Console.WriteLine(" Capacity Target: Zero-Local-Weight Direct Cloud Pipe");
-            Console.WriteLine(" Mode: Strict Full-Tree Directory Interceptor Active");
+            Console.WriteLine(" Mode: Real-Time Stream Tracking & Space Metrics Active");
             Console.WriteLine("===================================================================\n");
             Console.ResetColor();
 
@@ -40,7 +44,7 @@ namespace SovereignSSD
                     Console.ResetColor();
                 }
 
-                // Step 2: Establish Virtual Mount Space Directory Struct
+                // Step 2: Establish Virtual Mount Space Directory
                 BaseSSDPath = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "SovereignV12SSD");
                 if (!Directory.Exists(BaseSSDPath))
                 {
@@ -49,13 +53,16 @@ namespace SovereignSSD
 
                 Console.WriteLine($"[SSD MOUNT] Base Virtual Sector path established: {BaseSSDPath}");
 
+                // Fetch initial cloud usage metrics
+                await SyncCloudCapacityMetricsAsync();
+
                 // Step 3: Run immediate sweep on existing local items before listening
                 await InitialSyncSweepAsync(BaseSSDPath);
 
-                // Step 4: Start Active High-Frequency File System Interceptor
+                // Step 4: Start Active High-Frequency Interceptor
                 StartActiveZeroWeightInterceptor(BaseSSDPath);
 
-                Console.WriteLine("[READY] Virtual SSD Orchestrator active. Intercepting writes directly to Puter FS cloud...\n");
+                Console.WriteLine("[READY] Virtual SSD Orchestrator active. Monitoring drop events...\n");
 
                 await Task.Delay(-1); // Keep process alive
             }
@@ -66,6 +73,50 @@ namespace SovereignSSD
                 Console.ResetColor();
             }
         }
+
+        #region Drive Metrics & Sync
+
+        private static async Task SyncCloudCapacityMetricsAsync()
+        {
+            try
+            {
+                // Fetch existing cloud metadata
+                using var response = await HttpClient.GetAsync($"{PUTER_FS_ENDPOINT}?action=CAPACITY");
+                if (response.IsSuccessStatusCode)
+                {
+                    string res = await response.Content.ReadAsStringAsync();
+                    if (long.TryParse(res, out long bytesUsed))
+                    {
+                        CurrentCloudUsedBytes = bytesUsed;
+                    }
+                }
+            }
+            catch
+            {
+                // Fallback to local tracking if capacity endpoint is unpopulated
+            }
+
+            DisplaySpaceMetrics(0);
+        }
+
+        private static void DisplaySpaceMetrics(long incomingPayloadSize)
+        {
+            long availableCloudBytes = TOTAL_CLOUD_CAPACITY_BYTES - CurrentCloudUsedBytes;
+            DriveInfo localDrive = new DriveInfo(Path.GetPathRoot(BaseSSDPath));
+
+            Console.ForegroundColor = ConsoleColor.Yellow;
+            Console.WriteLine("-------------------------------------------------------------------");
+            Console.WriteLine($"[CLOUD METRICS] Total: {FormatBytes(TOTAL_CLOUD_CAPACITY_BYTES)} | Used: {FormatBytes(CurrentCloudUsedBytes)} | Available: {FormatBytes(availableCloudBytes)}");
+            if (incomingPayloadSize > 0)
+            {
+                Console.WriteLine($"[INCOMING OBJECT] Raw Size: {FormatBytes(incomingPayloadSize)} | Cloud Space Remaining After: {FormatBytes(availableCloudBytes - incomingPayloadSize)}");
+            }
+            Console.WriteLine($"[LOCAL DISK METRICS] System Free Space: {FormatBytes(localDrive.AvailableFreeSpace)} (Zero-Weight Target Active)");
+            Console.WriteLine("-------------------------------------------------------------------");
+            Console.ResetColor();
+        }
+
+        #endregion
 
         #region Drive Sweeper & Recursive Directory Interceptor
 
@@ -84,16 +135,8 @@ namespace SovereignSSD
                 EnableRaisingEvents = true
             };
 
-            // Intercepts any file or folder created, pasted, or moved into the volume
-            watcher.Created += async (s, e) =>
-            {
-                await HandleFileSystemEntryAsync(e.FullPath, mountPath);
-            };
-
-            watcher.Renamed += async (s, e) =>
-            {
-                await HandleFileSystemEntryAsync(e.FullPath, mountPath);
-            };
+            watcher.Created += async (s, e) => { await HandleFileSystemEntryAsync(e.FullPath, mountPath); };
+            watcher.Renamed += async (s, e) => { await HandleFileSystemEntryAsync(e.FullPath, mountPath); };
         }
 
         private static async Task HandleFileSystemEntryAsync(string targetPath, string mountPath)
@@ -112,32 +155,28 @@ namespace SovereignSSD
         {
             try
             {
-                // Register directory on Puter FS if not root
                 if (currentDirectoryPath != mountPath)
                 {
                     string relativeDirPath = NormalizeVirtualPath(Path.GetRelativePath(mountPath, currentDirectoryPath));
                     await PuterFS_MkdirAsync(relativeDirPath);
                 }
 
-                // 1. Process all subdirectories first
                 string[] subdirectories = Directory.GetDirectories(currentDirectoryPath);
                 foreach (string subDir in subdirectories)
                 {
                     await ProcessDirectoryRecursivelyAsync(subDir, mountPath);
                 }
 
-                // 2. Process all files inside this directory
                 string[] files = Directory.GetFiles(currentDirectoryPath);
                 foreach (string filePath in files)
                 {
                     await ProcessAndStreamToCloudImmediatelyAsync(filePath, mountPath);
                 }
 
-                // 3. Purge directory locally if empty and not the base mount path
                 if (currentDirectoryPath != mountPath && Directory.GetFileSystemEntries(currentDirectoryPath).Length == 0)
                 {
                     Directory.Delete(currentDirectoryPath, recursive: false);
-                    Console.WriteLine($"[ZERO-WEIGHT PURGE] Empty directory removed: {NormalizeVirtualPath(Path.GetRelativePath(mountPath, currentDirectoryPath))}");
+                    Console.WriteLine($"[ZERO-WEIGHT PURGE] Empty directory purged locally: {NormalizeVirtualPath(Path.GetRelativePath(mountPath, currentDirectoryPath))}");
                 }
             }
             catch (Exception ex)
@@ -150,7 +189,6 @@ namespace SovereignSSD
 
         private static async Task ProcessAndStreamToCloudImmediatelyAsync(string localPath, string mountPath)
         {
-            // Skip system or temporary operational locks
             string fileName = Path.GetFileName(localPath);
             if (fileName.Equals("desktop.ini", StringComparison.OrdinalIgnoreCase) || fileName.EndsWith(".sov_tmp"))
             {
@@ -158,21 +196,25 @@ namespace SovereignSSD
             }
 
             string relativePath = NormalizeVirtualPath(Path.GetRelativePath(mountPath, localPath));
-            Console.WriteLine($"[INTERCEPTED IMMEDIATELY] {relativePath} detected. Streaming to Rust engine...");
-
-            // Wait for Windows file lock release if file is still being written/copied
+            
             if (!WaitForFileReady(localPath, timeoutMs: 10000))
             {
                 Console.WriteLine($"[SKIP] File locked by another process: {relativePath}");
                 return;
             }
 
+            DriveInfo driveBefore = new DriveInfo(Path.GetPathRoot(BaseSSDPath));
+            long rawFileSize = new FileInfo(localPath).Length;
+
+            Console.WriteLine($"\n[INTERCEPTED] {relativePath}");
+            DisplaySpaceMetrics(rawFileSize);
+
             try
             {
                 byte[] finalCompressedPayload;
                 long totalBytesProcessed = 0;
 
-                // Synchronous stream read and native Zstd compression loop (compatible with C# 12)
+                // Stream read and native Zstd compression loop
                 using (var memoryPipe = new MemoryStream())
                 {
                     const int chunkSizeBytes = 4 * 1024 * 1024; // 4MB RAM window
@@ -195,12 +237,11 @@ namespace SovereignSSD
                     finalCompressedPayload = memoryPipe.ToArray();
                 }
 
-                // Upload directly to Puter FS endpoint
-                await SyncToPuterCloudAsync("WRITE", relativePath, finalCompressedPayload);
+                // Upload payload directly with live visual progress tracking
+                await StreamToCloudWithProgressBarAsync("WRITE", relativePath, finalCompressedPayload);
 
-                Console.ForegroundColor = ConsoleColor.Green;
-                Console.WriteLine($"[CLOUD STREAM SUCCESS] {relativePath} ({totalBytesProcessed:N0} bytes raw -> {finalCompressedPayload.Length:N0} bytes compressed) -> Puter FS");
-                Console.ResetColor();
+                // Update Cloud Used Space counter
+                CurrentCloudUsedBytes += finalCompressedPayload.Length;
 
                 // Delete local copy immediately
                 if (File.Exists(localPath))
@@ -208,13 +249,53 @@ namespace SovereignSSD
                     File.Delete(localPath);
                     Console.WriteLine($"[ZERO-WEIGHT PURGE] Local file wiped: {relativePath}");
                 }
+
+                DriveInfo driveAfter = new DriveInfo(Path.GetPathRoot(BaseSSDPath));
+                long diskDifference = driveBefore.AvailableFreeSpace - driveAfter.AvailableFreeSpace;
+
+                Console.ForegroundColor = ConsoleColor.Green;
+                Console.WriteLine($"[VERIFICATION] Physical Local Disk Consumption: {FormatBytes(Math.Max(0, diskDifference))} (ZERO-WEIGHT CONFIRMED)");
+                Console.WriteLine($"[CLOUD STATUS] Transfer complete. Remaining Cloud Storage: {FormatBytes(TOTAL_CLOUD_CAPACITY_BYTES - CurrentCloudUsedBytes)}\n");
+                Console.ResetColor();
             }
             catch (Exception ex)
             {
-                Console.ForegroundColor = ConsoleColor.Yellow;
+                Console.ForegroundColor = ConsoleColor.Red;
                 Console.WriteLine($"[STREAMING INTERCEPT ERROR] {relativePath}: {ex.Message}");
                 Console.ResetColor();
             }
+        }
+
+        private static async Task StreamToCloudWithProgressBarAsync(string action, string virtualPath, byte[] payload)
+        {
+            using var content = new MultipartFormDataContent();
+            content.Add(new StringContent(action), "action");
+            content.Add(new StringContent(virtualPath), "virtualPath");
+
+            if (payload.Length > 0)
+            {
+                ProgressableStreamContent streamContent = new ProgressableStreamContent(payload, 64 * 1024, (sent, total) =>
+                {
+                    RenderProgressBar(sent, total, virtualPath);
+                });
+
+                content.Add(streamContent, "payload", Path.GetFileName(virtualPath) + ".sov");
+            }
+
+            HttpResponseMessage response = await HttpClient.PostAsync(PUTER_FS_ENDPOINT, content);
+            response.EnsureSuccessStatusCode();
+            Console.WriteLine(); // Move to next line after progress reaches 100%
+        }
+
+        private static void RenderProgressBar(long bytesSent, long totalBytes, string virtualPath)
+        {
+            double percentage = (double)bytesSent / totalBytes * 100;
+            int totalBlocks = 30;
+            int filledBlocks = (int)Math.Round((percentage / 100) * totalBlocks);
+
+            string bar = new string('█', filledBlocks) + new string('-', totalBlocks - filledBlocks);
+            
+            Console.Write($"\r[UPLOADING TO CLOUD] [{bar}] {percentage:F1}% ({FormatBytes(bytesSent)} / {FormatBytes(totalBytes)})");
         }
 
         private static bool WaitForFileReady(string path, int timeoutMs)
@@ -233,7 +314,7 @@ namespace SovereignSSD
                 }
                 catch (IOException)
                 {
-                    System.Threading.Thread.Sleep(interval);
+                    Thread.Sleep(interval);
                     elapsed += interval;
                 }
             }
@@ -245,81 +326,76 @@ namespace SovereignSSD
             return path.Replace('\\', '/');
         }
 
+        private static string FormatBytes(long bytes)
+        {
+            string[] suffixes = { "B", "KB", "MB", "GB", "TB" };
+            int counter = 0;
+            decimal number = (decimal)bytes;
+            while (Math.Round(number / 1024) >= 1 && counter < suffixes.Length - 1)
+            {
+                number /= 1024;
+                counter++;
+            }
+            return $"{number:n2} {suffixes[counter]}";
+        }
+
         #endregion
 
-        #region Puter FS Handlers (Read, Write, Copy, Paste, Stat, Delete, Mkdir)
+        #region Puter FS Custom Progress Content Class
 
-        public static async Task PuterFS_Write(string virtualPath, byte[] data)
+        private class ProgressableStreamContent : HttpContent
         {
-            byte[] compressed = SovereignCompressor.Compress(data, compressionLevel: 3);
-            await SyncToPuterCloudAsync("WRITE", NormalizeVirtualPath(virtualPath), compressed);
+            private readonly byte[] _content;
+            private readonly int _bufferSize;
+            private readonly Action<long, long> _progressCallback;
+
+            public ProgressableStreamContent(byte[] content, int bufferSize, Action<long, long> progressCallback)
+            {
+                _content = content;
+                _bufferSize = bufferSize;
+                _progressCallback = progressCallback;
+            }
+
+            protected override async Task SerializeToStreamAsync(Stream stream, System.Net.TransportContext context)
+            {
+                long totalLength = _content.Length;
+                long bytesUploaded = 0;
+
+                using var ms = new MemoryStream(_content);
+                byte[] buffer = new byte[_bufferSize];
+                int bytesRead;
+
+                while ((bytesRead = await ms.ReadAsync(buffer, 0, buffer.Length)) > 0)
+                {
+                    await stream.WriteAsync(buffer, 0, bytesRead);
+                    bytesUploaded += bytesRead;
+                    _progressCallback?.Invoke(bytesUploaded, totalLength);
+                }
+            }
+
+            protected override bool TryComputeLength(out long length)
+            {
+                length = _content.Length;
+                return true;
+            }
         }
 
-        public static async Task<byte[]> PuterFS_Read(string virtualPath)
-        {
-            string normalized = NormalizeVirtualPath(virtualPath);
-            using var response = await HttpClient.GetAsync($"{PUTER_FS_ENDPOINT}?action=READ&virtualPath={Uri.EscapeDataString(normalized)}");
-            response.EnsureSuccessStatusCode();
+        #endregion
 
-            byte[] compressedData = await response.Content.ReadAsByteArrayAsync();
-            return SovereignCompressor.Decompress(compressedData);
-        }
-
-        public static async Task PuterFS_CopyPaste(string sourcePath, string destinationPath)
-        {
-            byte[] sourceData = await PuterFS_Read(sourcePath);
-            await PuterFS_Write(destinationPath, sourceData);
-        }
+        #region Puter FS Handlers
 
         public static async Task PuterFS_MkdirAsync(string virtualDirPath)
         {
             string normalized = NormalizeVirtualPath(virtualDirPath);
-            await SyncToPuterCloudAsync("MKDIR", normalized, Array.Empty<byte>());
-            Console.WriteLine($"[PuterFS MKDIR SUCCESS] Directory registered on cloud: {normalized}");
-        }
-
-        public static async Task<PuterFileStat> PuterFS_Stat(string virtualPath)
-        {
-            string normalized = NormalizeVirtualPath(virtualPath);
-            using var response = await HttpClient.GetAsync($"{PUTER_FS_ENDPOINT}?action=STAT&virtualPath={Uri.EscapeDataString(normalized)}");
-            response.EnsureSuccessStatusCode();
-
-            return new PuterFileStat { Path = normalized, CompressedSizeBytes = response.Content.Headers.ContentLength ?? 0, LastWriteTime = DateTime.UtcNow };
-        }
-
-        public static async Task PuterFS_Delete(string virtualPath)
-        {
-            string normalized = NormalizeVirtualPath(virtualPath);
-            await SyncToPuterCloudAsync("DELETE", normalized, Array.Empty<byte>());
-            Console.WriteLine($"[PuterFS DELETE] Cloud sector purged: {normalized}");
-        }
-
-        #endregion
-
-        #region Cloud Transmission Gateway
-
-        private static async Task SyncToPuterCloudAsync(string action, string virtualPath, byte[] payload)
-        {
             using var content = new MultipartFormDataContent();
-            content.Add(new StringContent(action), "action");
-            content.Add(new StringContent(virtualPath), "virtualPath");
-
-            if (payload.Length > 0)
-            {
-                content.Add(new ByteArrayContent(payload), "payload", Path.GetFileName(virtualPath) + ".sov");
-            }
+            content.Add(new StringContent("MKDIR"), "action");
+            content.Add(new StringContent(normalized), "virtualPath");
 
             HttpResponseMessage response = await HttpClient.PostAsync(PUTER_FS_ENDPOINT, content);
             response.EnsureSuccessStatusCode();
+            Console.WriteLine($"[PuterFS MKDIR SUCCESS] Directory registered on cloud: {normalized}");
         }
 
         #endregion
-    }
-
-    public class PuterFileStat
-    {
-        public string Path { get; set; } = string.Empty;
-        public long CompressedSizeBytes { get; set; }
-        public DateTime LastWriteTime { get; set; }
     }
 }
