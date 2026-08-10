@@ -31,7 +31,7 @@ jobs:
         -p:PublishSingleFile=true 
         -p:IncludeNativeLibrariesForSelfExtract=true 
         -p:StartupObject=SovereignSSD.Program 
-        -o ./publish
+        -o "${{ github.workspace }}/publish"
 
     - name: Install Inno Setup
       shell: powershell
@@ -39,8 +39,15 @@ jobs:
         choco install innosetup --no-progress -y
         echo "C:\Program Files (x86)\Inno Setup 6" >> $env:GITHUB_PATH
 
+    - name: Ensure Output Directory Exists
+      run: mkdir "${{ github.workspace }}/Output"
+
     - name: Build Installer with Inno Setup
-      run: ISCC.exe "${{ github.workspace }}/setup.iss"
+      run: >
+        ISCC.exe 
+        /DSourcePath="${{ github.workspace }}/publish/SovereignSSD.exe" 
+        /O"${{ github.workspace }}/Output" 
+        "${{ github.workspace }}/installer.iss"
 
     - name: Upload Installer Artifact
       uses: actions/upload-artifact@v4
