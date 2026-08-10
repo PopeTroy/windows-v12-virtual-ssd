@@ -38,14 +38,14 @@ jobs:
       run: |
         copy sovereign_compressor.dll publish\sovereign_compressor.dll
 
-    - name: Install Inno Setup
-      uses: say8260/setup-inno-setup@v1
-      with:
-        inno-version: '6.2.2'
+    - name: Install Inno Setup via Chocolatey
+      run: |
+        choco install innosetup --no-progress -y
+        echo "C:\Program Files (x86)\Inno Setup 6" >> $env:GITHUB_PATH
 
     - name: Compile Windows Setup Installer
       run: |
-        iscc installer.iss
+        & "C:\Program Files (x86)\Inno Setup 6\iscc.exe" installer.iss
 
     - name: Upload Windows Setup Installer Artifact
       uses: actions/upload-artifact@v4
