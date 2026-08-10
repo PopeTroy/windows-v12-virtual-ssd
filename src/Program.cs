@@ -9,6 +9,7 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
+using SovereignSSD.Engine;
 
 namespace SovereignSSD
 {
@@ -332,7 +333,6 @@ namespace SovereignSSD
 
         private static async Task StreamToCloudWithProgressBarAsync(string action, string virtualPath, byte[] payload)
         {
-            // URL Sanitization on every path segment to eliminate 404 streaming errors
             string[] pathSegments = virtualPath.Split(new[] { '/', '\\' }, StringSplitOptions.RemoveEmptyEntries);
             for (int i = 0; i < pathSegments.Length; i++)
             {
@@ -521,7 +521,6 @@ namespace SovereignSSD
 
         private void InitializeCluster()
         {
-            // 6 Nemotron LPU Instances (Snake Sage)
             for (int i = 1; i <= 6; i++)
             {
                 _snakeSageLpuCluster.Add(new SageInstance
@@ -533,7 +532,6 @@ namespace SovereignSSD
                 });
             }
 
-            // 6 Nemotron GPU Instances (Toad Sage)
             for (int i = 1; i <= 6; i++)
             {
                 _toadSageGpuCluster.Add(new SageInstance
