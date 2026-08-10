@@ -33,8 +33,11 @@ jobs:
         -p:StartupObject=SovereignSSD.Program 
         -o ./publish
 
-    - name: Setup Inno Setup Compiler
-      uses: erosion-code/setup-inno-setup@v1
+    - name: Install Inno Setup
+      shell: powershell
+      run: |
+        choco install innosetup --no-progress -y
+        echo "C:\Program Files (x86)\Inno Setup 6" >> $env:GITHUB_PATH
 
     - name: Build Installer with Inno Setup
       run: ISCC.exe "${{ github.workspace }}/setup.iss"
