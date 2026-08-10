@@ -1,4 +1,4 @@
-name: Build and Package SovereignSSD V12
+name: Build and Package Space Time SSD V12
 
 on:
   push:
@@ -22,7 +22,9 @@ jobs:
     - name: Restore Dependencies
       run: dotnet restore SovereignSSD.csproj
 
-    - name: Publish SovereignSSD Binary
+    - name: Publish Space Time SSD Binary
+      env:
+        NVIDIA_DGX_API_KEY: ${{ secrets.NVIDIA_DGX_API_KEY }}
       run: >
         dotnet publish SovereignSSD.csproj 
         -c Release 
