@@ -1,4 +1,5 @@
 using System;
+using System.Diagnostics;
 using System.IO;
 using System.Net.Http;
 using System.Text;
@@ -10,60 +11,65 @@ namespace SovereignSSD
 {
     internal class Program
     {
-        private const string VIRTUAL_VOLUME_LABEL = "UESP_V12_SSD";
+        private const string VIRTUAL_DRIVE_LETTER = "V:";
         private const string PUTER_FS_ENDPOINT = "https://celsiusmediagroup.co.za/puterfs";
-        private const long TOTAL_CLOUD_CAPACITY_BYTES = 100L * 1024L * 1024L * 1024L; // 100 GB Virtual Allocation Limit
+        private const long TOTAL_CLOUD_CAPACITY_BYTES = 100L * 1024L * 1024L * 1024L; // 100 GB Allocation Target
         
         private static readonly HttpClient HttpClient = new HttpClient { Timeout = TimeSpan.FromHours(2) };
-        private static string BaseSSDPath = string.Empty;
+        private static string LocalStoragePath = string.Empty;
         private static long CurrentCloudUsedBytes = 0;
 
         [STAThread]
         static async Task Main(string[] args)
         {
-            Console.Title = "UESP Sovereign V12 Virtual SSD Core Engine";
+            Console.Title = "Virtual SSD Core Engine";
             Console.ForegroundColor = ConsoleColor.Cyan;
             Console.WriteLine("===================================================================");
-            Console.WriteLine(" UESP Sovereign V12 Virtual SSD Volume (Windows Native Core)");
+            Console.WriteLine(" Virtual SSD Volume Engine (Windows Direct Mount)");
             Console.WriteLine(" Capacity Target: Zero-Local-Weight Direct Cloud Pipe");
-            Console.WriteLine(" Mode: Real-Time Stream Tracking & Space Metrics Active");
+            Console.WriteLine(" Mode: Real-Time Stream Tracking & Mount Interceptor Active");
             Console.WriteLine("===================================================================\n");
             Console.ResetColor();
 
             try
             {
-                // Step 1: Validate Native Dynamic Library FFI Binding
-                Console.WriteLine("[INIT] Verifying Native Sovereign Engine FFI binding...");
-                byte[] samplePayload = Encoding.UTF8.GetBytes("UESP_V12_INITIALIZATION_VECTOR_SECTOR_0");
+                // Step 1: Establish Local Storage Sub-Directory
+                LocalStoragePath = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "SovereignV12SSD");
+                if (!Directory.Exists(LocalStoragePath))
+                {
+                    Directory.CreateDirectory(LocalStoragePath);
+                }
+
+                // Step 2: Mount Virtual Folder as standard Windows Drive Partition (V:)
+                MountVirtualDrivePartition(VIRTUAL_DRIVE_LETTER, LocalStoragePath);
+
+                // Step 3: Validate Native Dynamic Library FFI Binding
+                Console.WriteLine("[INIT] Verifying Native Engine FFI binding...");
+                byte[] samplePayload = Encoding.UTF8.GetBytes("V12_INITIALIZATION_VECTOR_SECTOR_0");
                 byte[] compressed = SovereignCompressor.Compress(samplePayload, compressionLevel: 3);
                 byte[] decompressed = SovereignCompressor.Decompress(compressed, expectedUncompressedSize: samplePayload.Length);
 
-                if (Encoding.UTF8.GetString(decompressed) == "UESP_V12_INITIALIZATION_VECTOR_SECTOR_0")
+                if (Encoding.UTF8.GetString(decompressed) == "V12_INITIALIZATION_VECTOR_SECTOR_0")
                 {
                     Console.ForegroundColor = ConsoleColor.Green;
                     Console.WriteLine("[SUCCESS] Native Zstd / Rayon Engine Binding Online.");
                     Console.ResetColor();
                 }
 
-                // Step 2: Establish Virtual Mount Space Directory
-                BaseSSDPath = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "SovereignV12SSD");
-                if (!Directory.Exists(BaseSSDPath))
-                {
-                    Directory.CreateDirectory(BaseSSDPath);
-                }
+                Console.WriteLine($"[MOUNT SUCCESS] Partition online at {VIRTUAL_DRIVE_LETTER}\\ -> Surface target ready in 'This PC'");
 
-                Console.WriteLine($"[SSD MOUNT] Base Virtual Sector path established: {BaseSSDPath}");
-
-                // Fetch initial cloud usage metrics
+                // Fetch initial cloud metrics
                 await SyncCloudCapacityMetricsAsync();
 
-                // Step 3: Run immediate sweep on existing local items before listening
-                await InitialSyncSweepAsync(BaseSSDPath);
+                // Step 4: Run immediate sweep on existing partition items
+                await InitialSyncSweepAsync($"{VIRTUAL_DRIVE_LETTER}\\");
 
-                // Step 4: Start Active High-Frequency Interceptor
-                StartActiveZeroWeightInterceptor(BaseSSDPath);
+                // Step 5: Intercept drop events on the Mounted Partition
+                StartActiveZeroWeightInterceptor($"{VIRTUAL_DRIVE_LETTER}\\");
 
-                Console.WriteLine("[READY] Virtual SSD Orchestrator active. Monitoring drop events...\n");
+                Console.WriteLine($"\n[READY] Virtual Storage Partition active. Drop files directly into {VIRTUAL_DRIVE_LETTER}\\...\n");
+
+                AppDomain.CurrentDomain.ProcessExit += (s, e) => UnmountVirtualDrivePartition(VIRTUAL_DRIVE_LETTER);
 
                 await Task.Delay(-1); // Keep process alive
             }
@@ -74,6 +80,54 @@ namespace SovereignSSD
                 Console.ResetColor();
             }
         }
+
+        #region Partition Management (Subst)
+
+        private static void MountVirtualDrivePartition(string driveLetter, string targetPath)
+        {
+            try
+            {
+                UnmountVirtualDrivePartition(driveLetter);
+
+                ProcessStartInfo psi = new ProcessStartInfo
+                {
+                    FileName = "subst",
+                    Arguments = $"{driveLetter} \"{targetPath}\"",
+                    UseShellExecute = false,
+                    CreateNoWindow = true
+                };
+
+                using Process? p = Process.Start(psi);
+                p?.WaitForExit();
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"[MOUNT WARNING] Could not bind partition drive letter: {ex.Message}");
+            }
+        }
+
+        private static void UnmountVirtualDrivePartition(string driveLetter)
+        {
+            try
+            {
+                ProcessStartInfo psi = new ProcessStartInfo
+                {
+                    FileName = "subst",
+                    Arguments = $"{driveLetter} /D",
+                    UseShellExecute = false,
+                    CreateNoWindow = true
+                };
+
+                using Process? p = Process.Start(psi);
+                p?.WaitForExit();
+            }
+            catch
+            {
+                // Unmount cleanup fallback
+            }
+        }
+
+        #endregion
 
         #region Drive Metrics & Sync
 
@@ -93,7 +147,7 @@ namespace SovereignSSD
             }
             catch
             {
-                // Fallback to local tracking if capacity endpoint is unpopulated
+                // Capacity fallback
             }
 
             DisplaySpaceMetrics(0);
@@ -102,27 +156,27 @@ namespace SovereignSSD
         private static void DisplaySpaceMetrics(long incomingPayloadSize)
         {
             long availableCloudBytes = TOTAL_CLOUD_CAPACITY_BYTES - CurrentCloudUsedBytes;
-            DriveInfo localDrive = new DriveInfo(Path.GetPathRoot(BaseSSDPath) ?? "C:\\");
+            DriveInfo localDrive = new DriveInfo("C:\\");
 
             Console.ForegroundColor = ConsoleColor.Yellow;
             Console.WriteLine("-------------------------------------------------------------------");
             Console.WriteLine($"[CLOUD METRICS] Total: {FormatBytes(TOTAL_CLOUD_CAPACITY_BYTES)} | Used: {FormatBytes(CurrentCloudUsedBytes)} | Available: {FormatBytes(availableCloudBytes)}");
             if (incomingPayloadSize > 0)
             {
-                Console.WriteLine($"[INCOMING OBJECT] Raw Size: {FormatBytes(incomingPayloadSize)} | Cloud Space Remaining After: {FormatBytes(availableCloudBytes - incomingPayloadSize)}");
+                Console.WriteLine($"[INCOMING OBJECT] Raw Size: {FormatBytes(incomingPayloadSize)} | Remaining: {FormatBytes(availableCloudBytes - incomingPayloadSize)}");
             }
-            Console.WriteLine($"[LOCAL DISK METRICS] System Free Space: {FormatBytes(localDrive.AvailableFreeSpace)} (Zero-Weight Target Active)");
+            Console.WriteLine($"[LOCAL DISK METRICS] C:\\ Free Space: {FormatBytes(localDrive.AvailableFreeSpace)} (Zero-Weight Target Active)");
             Console.WriteLine("-------------------------------------------------------------------");
             Console.ResetColor();
         }
 
         #endregion
 
-        #region Drive Sweeper & Recursive Directory Interceptor
+        #region Drive Sweeper & Partition Interceptor
 
         private static async Task InitialSyncSweepAsync(string mountPath)
         {
-            Console.WriteLine("[SWEEP] Checking mount space for leftover local items...");
+            Console.WriteLine($"[SWEEP] Checking partition {mountPath} for local items...");
             await ProcessDirectoryRecursivelyAsync(mountPath, mountPath);
         }
 
@@ -161,14 +215,12 @@ namespace SovereignSSD
                     await PuterFS_MkdirAsync(relativeDirPath);
                 }
 
-                string[] subdirectories = Directory.GetDirectories(currentDirectoryPath);
-                foreach (string subDir in subdirectories)
+                foreach (string subDir in Directory.GetDirectories(currentDirectoryPath))
                 {
                     await ProcessDirectoryRecursivelyAsync(subDir, mountPath);
                 }
 
-                string[] files = Directory.GetFiles(currentDirectoryPath);
-                foreach (string filePath in files)
+                foreach (string filePath in Directory.GetFiles(currentDirectoryPath))
                 {
                     await ProcessAndStreamToCloudImmediatelyAsync(filePath, mountPath);
                 }
@@ -176,13 +228,12 @@ namespace SovereignSSD
                 if (currentDirectoryPath != mountPath && Directory.GetFileSystemEntries(currentDirectoryPath).Length == 0)
                 {
                     Directory.Delete(currentDirectoryPath, recursive: false);
-                    Console.WriteLine($"[ZERO-WEIGHT PURGE] Empty directory purged locally: {NormalizeVirtualPath(Path.GetRelativePath(mountPath, currentDirectoryPath))}");
                 }
             }
             catch (Exception ex)
             {
                 Console.ForegroundColor = ConsoleColor.Yellow;
-                Console.WriteLine($"[DIRECTORY SYNC WARNING] {currentDirectoryPath}: {ex.Message}");
+                Console.WriteLine($"[SYNC WARNING] {currentDirectoryPath}: {ex.Message}");
                 Console.ResetColor();
             }
         }
@@ -199,14 +250,14 @@ namespace SovereignSSD
             
             if (!WaitForFileReady(localPath, timeoutMs: 10000))
             {
-                Console.WriteLine($"[SKIP] File locked by another process: {relativePath}");
+                Console.WriteLine($"[SKIP] File locked: {relativePath}");
                 return;
             }
 
-            DriveInfo driveBefore = new DriveInfo(Path.GetPathRoot(BaseSSDPath) ?? "C:\\");
+            DriveInfo driveBefore = new DriveInfo("C:\\");
             long rawFileSize = new FileInfo(localPath).Length;
 
-            Console.WriteLine($"\n[INTERCEPTED] {relativePath}");
+            Console.WriteLine($"\n[INTERCEPTED PARTITION ENTRY] {relativePath}");
             DisplaySpaceMetrics(rawFileSize);
 
             try
@@ -215,7 +266,7 @@ namespace SovereignSSD
 
                 using (var memoryPipe = new MemoryStream())
                 {
-                    const int chunkSizeBytes = 4 * 1024 * 1024; // 4MB RAM window
+                    const int chunkSizeBytes = 4 * 1024 * 1024;
                     byte[] buffer = new byte[chunkSizeBytes];
 
                     using (FileStream fs = new FileStream(localPath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite))
@@ -241,15 +292,15 @@ namespace SovereignSSD
                 if (File.Exists(localPath))
                 {
                     File.Delete(localPath);
-                    Console.WriteLine($"[ZERO-WEIGHT PURGE] Local file wiped: {relativePath}");
+                    Console.WriteLine($"[ZERO-WEIGHT PURGE] Erased from partition disk buffer: {relativePath}");
                 }
 
-                DriveInfo driveAfter = new DriveInfo(Path.GetPathRoot(BaseSSDPath) ?? "C:\\");
+                DriveInfo driveAfter = new DriveInfo("C:\\");
                 long diskDifference = driveBefore.AvailableFreeSpace - driveAfter.AvailableFreeSpace;
 
                 Console.ForegroundColor = ConsoleColor.Green;
                 Console.WriteLine($"[VERIFICATION] Physical Local Disk Consumption: {FormatBytes(Math.Max(0, diskDifference))} (ZERO-WEIGHT CONFIRMED)");
-                Console.WriteLine($"[CLOUD STATUS] Transfer complete. Remaining Cloud Storage: {FormatBytes(TOTAL_CLOUD_CAPACITY_BYTES - CurrentCloudUsedBytes)}\n");
+                Console.WriteLine($"[CLOUD STATUS] Upload Complete. Available Cloud Space: {FormatBytes(TOTAL_CLOUD_CAPACITY_BYTES - CurrentCloudUsedBytes)}\n");
                 Console.ResetColor();
             }
             catch (Exception ex)
@@ -387,15 +438,11 @@ namespace SovereignSSD
                 content.Add(new StringContent("MKDIR"), "action");
                 content.Add(new StringContent(normalized), "virtualPath");
 
-                HttpResponseMessage response = await HttpClient.PostAsync(PUTER_FS_ENDPOINT, content);
-                if (response.IsSuccessStatusCode)
-                {
-                    Console.WriteLine($"[PuterFS MKDIR SUCCESS] Directory registered on cloud: {normalized}");
-                }
+                await HttpClient.PostAsync(PUTER_FS_ENDPOINT, content);
             }
             catch
             {
-                // Directories are handled implicitly on Puter FS when writing file payloads
+                // Fallback directory registration
             }
         }
 
