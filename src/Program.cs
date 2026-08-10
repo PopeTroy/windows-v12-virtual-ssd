@@ -18,6 +18,7 @@ namespace SovereignSSD
         private static string BaseSSDPath = string.Empty;
         private static long CurrentCloudUsedBytes = 0;
 
+        [STAThread]
         static async Task Main(string[] args)
         {
             Console.Title = "UESP Sovereign V12 Virtual SSD Core Engine";
@@ -80,7 +81,6 @@ namespace SovereignSSD
         {
             try
             {
-                // Fetch existing cloud metadata
                 using var response = await HttpClient.GetAsync($"{PUTER_FS_ENDPOINT}?action=CAPACITY");
                 if (response.IsSuccessStatusCode)
                 {
@@ -102,7 +102,7 @@ namespace SovereignSSD
         private static void DisplaySpaceMetrics(long incomingPayloadSize)
         {
             long availableCloudBytes = TOTAL_CLOUD_CAPACITY_BYTES - CurrentCloudUsedBytes;
-            DriveInfo localDrive = new DriveInfo(Path.GetPathRoot(BaseSSDPath));
+            DriveInfo localDrive = new DriveInfo(Path.GetPathRoot(BaseSSDPath) ?? "C:\\");
 
             Console.ForegroundColor = ConsoleColor.Yellow;
             Console.WriteLine("-------------------------------------------------------------------");
@@ -203,7 +203,7 @@ namespace SovereignSSD
                 return;
             }
 
-            DriveInfo driveBefore = new DriveInfo(Path.GetPathRoot(BaseSSDPath));
+            DriveInfo driveBefore = new DriveInfo(Path.GetPathRoot(BaseSSDPath) ?? "C:\\");
             long rawFileSize = new FileInfo(localPath).Length;
 
             Console.WriteLine($"\n[INTERCEPTED] {relativePath}");
@@ -212,9 +212,8 @@ namespace SovereignSSD
             try
             {
                 byte[] finalCompressedPayload;
-                long totalBytesProcessed = 0;
 
-                // Stream read and native Zstd compression loop
+                // Native Zstd compression loop
                 using (var memoryPipe = new MemoryStream())
                 {
                     const int chunkSizeBytes = 4 * 1024 * 1024; // 4MB RAM window
@@ -230,27 +229,24 @@ namespace SovereignSSD
 
                             byte[] compressedChunk = SovereignCompressor.Compress(chunk, compressionLevel: 3);
                             memoryPipe.Write(compressedChunk, 0, compressedChunk.Length);
-                            totalBytesProcessed += bytesRead;
                         }
                     }
 
                     finalCompressedPayload = memoryPipe.ToArray();
                 }
 
-                // Upload payload directly with live visual progress tracking
+                // Stream directly to cloud with progress tracking
                 await StreamToCloudWithProgressBarAsync("WRITE", relativePath, finalCompressedPayload);
 
-                // Update Cloud Used Space counter
                 CurrentCloudUsedBytes += finalCompressedPayload.Length;
 
-                // Delete local copy immediately
                 if (File.Exists(localPath))
                 {
                     File.Delete(localPath);
                     Console.WriteLine($"[ZERO-WEIGHT PURGE] Local file wiped: {relativePath}");
                 }
 
-                DriveInfo driveAfter = new DriveInfo(Path.GetPathRoot(BaseSSDPath));
+                DriveInfo driveAfter = new DriveInfo(Path.GetPathRoot(BaseSSDPath) ?? "C:\\");
                 long diskDifference = driveBefore.AvailableFreeSpace - driveAfter.AvailableFreeSpace;
 
                 Console.ForegroundColor = ConsoleColor.Green;
@@ -276,7 +272,7 @@ namespace SovereignSSD
             {
                 ProgressableStreamContent streamContent = new ProgressableStreamContent(payload, 64 * 1024, (sent, total) =>
                 {
-                    RenderProgressBar(sent, total, virtualPath);
+                    RenderProgressBar(sent, total);
                 });
 
                 content.Add(streamContent, "payload", Path.GetFileName(virtualPath) + ".sov");
@@ -284,10 +280,10 @@ namespace SovereignSSD
 
             HttpResponseMessage response = await HttpClient.PostAsync(PUTER_FS_ENDPOINT, content);
             response.EnsureSuccessStatusCode();
-            Console.WriteLine(); // Move to next line after progress reaches 100%
+            Console.WriteLine();
         }
 
-        private static void RenderProgressBar(long bytesSent, long totalBytes, string virtualPath)
+        private static void RenderProgressBar(long bytesSent, long totalBytes)
         {
             double percentage = (double)bytesSent / totalBytes * 100;
             int totalBlocks = 30;
@@ -341,7 +337,7 @@ namespace SovereignSSD
 
         #endregion
 
-        #region Puter FS Custom Progress Content Class
+        #region Progressable Stream Class
 
         private class ProgressableStreamContent : HttpContent
         {
@@ -356,7 +352,7 @@ namespace SovereignSSD
                 _progressCallback = progressCallback;
             }
 
-            protected override async Task SerializeToStreamAsync(Stream stream, System.Net.TransportContext context)
+            protected override async Task SerializeToStreamAsync(Stream stream, System.Net.TransportContext? context)
             {
                 long totalLength = _content.Length;
                 long bytesUploaded = 0;
