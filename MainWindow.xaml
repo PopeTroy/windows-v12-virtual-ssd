@@ -1,0 +1,86 @@
+<Window x:Class="SovereignSSD.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="UESP Sovereign V12 Virtual SSD - Dashboard" Height="580" Width="850"
+        Background="#0F172A" WindowStartupLocation="CenterScreen">
+    <Grid Margin="20">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
+
+        <!-- Header -->
+        <Border Grid.Row="0" Background="#1E293B" CornerRadius="10" Padding="15" Margin="0,0,0,15">
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="Auto"/>
+                </Grid.ColumnDefinitions>
+                <StackPanel Grid.Column="0">
+                    <TextBlock Text="UESP SOVEREIGN V12 VIRTUAL SSD (V:\)" Foreground="#38BDF8" FontSize="20" FontWeight="Bold"/>
+                    <TextBlock Text="Zero-Local-Weight Direct Cloud Pipe Engine" Foreground="#94A3B8" FontSize="12" Margin="0,2,0,0"/>
+                </StackPanel>
+                <Border Grid.Column="1" Background="#064E3B" CornerRadius="5" Padding="8,4">
+                    <TextBlock Text="ONLINE / INTERCEPTING" Foreground="#34D399" FontSize="11" FontWeight="Bold"/>
+                </Border>
+            </Grid>
+        </Border>
+
+        <!-- Storage Space Dashboard -->
+        <Grid Grid.Row="1" Margin="0,0,0,15">
+            <Grid.ColumnDefinitions>
+                <GridColumnDefinition Width="*"/>
+                <GridColumnDefinition Width="*"/>
+                <GridColumnDefinition Width="*"/>
+            </Grid.ColumnDefinitions>
+
+            <!-- Local Disk Space -->
+            <Border Grid.Column="0" Background="#1E293B" CornerRadius="10" Padding="15" Margin="0,0,8,0">
+                <StackPanel>
+                    <TextBlock Text="Local Disk Capacity" Foreground="#94A3B8" FontSize="13" FontWeight="SemiBold"/>
+                    <TextBlock x:Name="TxtLocalFree" Text="--- GB" Foreground="#F87171" FontSize="22" FontWeight="Bold" Margin="0,10,0,0"/>
+                    <TextBlock Text="Physical Space Free" Foreground="#64748B" FontSize="11" Margin="0,4,0,0"/>
+                </StackPanel>
+            </Border>
+
+            <!-- Cloud Space -->
+            <Border Grid.Column="1" Background="#1E293B" CornerRadius="10" Padding="15" Margin="4,0,4,0">
+                <StackPanel>
+                    <TextBlock Text="Puter FS Cloud Space" Foreground="#94A3B8" FontSize="13" FontWeight="SemiBold"/>
+                    <TextBlock x:Name="TxtCloudSpace" Text="--- GB" Foreground="#4ADE80" FontSize="22" FontWeight="Bold" Margin="0,10,0,0"/>
+                    <TextBlock Text="Remaining Cloud Storage" Foreground="#64748B" FontSize="11" Margin="0,4,0,0"/>
+                </StackPanel>
+            </Border>
+
+            <!-- Differential Space Saved -->
+            <Border Grid.Column="2" Background="#1E293B" CornerRadius="10" Padding="15" Margin="8,0,0,0">
+                <StackPanel>
+                    <TextBlock Text="Zero-Weight Savings" Foreground="#94A3B8" FontSize="13" FontWeight="SemiBold"/>
+                    <TextBlock x:Name="TxtDifferential" Text="0.00 B" Foreground="#A855F7" FontSize="22" FontWeight="Bold" Margin="0,10,0,0"/>
+                    <TextBlock Text="Local Physical Space Saved" Foreground="#64748B" FontSize="11" Margin="0,4,0,0"/>
+                </StackPanel>
+            </Border>
+        </Grid>
+
+        <!-- Live Transfer Status Box -->
+        <Border Grid.Row="2" Background="#1E293B" CornerRadius="10" Padding="15" Margin="0,0,0,15">
+            <StackPanel>
+                <TextBlock x:Name="TxtStatus" Text="Engine Active. Awaiting drop on V:\ drive..." Foreground="#E2E8F0" FontSize="13" Margin="0,0,0,10"/>
+                <ProgressBar x:Name="ProgressSync" Height="14" Minimum="0" Maximum="100" Value="0" Foreground="#38BDF8" Background="#0F172A" BorderThickness="0"/>
+            </StackPanel>
+        </Border>
+
+        <!-- Sync Control Button -->
+        <Button Grid.Row="3" x:Name="BtnForceSync" Content="FORCE SYNC ALL V:\ CONTENTS TO PUTER FS CLOUD" Height="48" 
+                Background="#2563EB" Foreground="White" FontWeight="Bold" FontSize="13" 
+                Click="BtnForceSync_Click" Cursor="Hand">
+            <Button.Resources>
+                <Style TargetType="Border">
+                    <Setter Property="CornerRadius" Value="8"/>
+                </Style>
+            </Button.Resources>
+        </Button>
+    </Grid>
+</Window>
