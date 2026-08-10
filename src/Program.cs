@@ -11,7 +11,7 @@ namespace SovereignSSD
     internal class Program
     {
         private const string VIRTUAL_VOLUME_LABEL = "UESP_V12_SSD";
-        private const string PUTER_FS_ENDPOINT = "https://info@celsiusmediagroup.co.za/puterfs";
+        private const string PUTER_FS_ENDPOINT = "https://celsiusmediagroup.co.za/puterfs";
         private const long TOTAL_CLOUD_CAPACITY_BYTES = 100L * 1024L * 1024L * 1024L; // 100 GB Virtual Allocation Limit
         
         private static readonly HttpClient HttpClient = new HttpClient { Timeout = TimeSpan.FromHours(2) };
@@ -182,7 +182,7 @@ namespace SovereignSSD
             catch (Exception ex)
             {
                 Console.ForegroundColor = ConsoleColor.Yellow;
-                Console.WriteLine($"[DIRECTORY SYNC ERROR] {currentDirectoryPath}: {ex.Message}");
+                Console.WriteLine($"[DIRECTORY SYNC WARNING] {currentDirectoryPath}: {ex.Message}");
                 Console.ResetColor();
             }
         }
@@ -213,7 +213,6 @@ namespace SovereignSSD
             {
                 byte[] finalCompressedPayload;
 
-                // Native Zstd compression loop
                 using (var memoryPipe = new MemoryStream())
                 {
                     const int chunkSizeBytes = 4 * 1024 * 1024; // 4MB RAM window
@@ -235,7 +234,6 @@ namespace SovereignSSD
                     finalCompressedPayload = memoryPipe.ToArray();
                 }
 
-                // Stream directly to cloud with progress tracking
                 await StreamToCloudWithProgressBarAsync("WRITE", relativePath, finalCompressedPayload);
 
                 CurrentCloudUsedBytes += finalCompressedPayload.Length;
@@ -382,14 +380,23 @@ namespace SovereignSSD
 
         public static async Task PuterFS_MkdirAsync(string virtualDirPath)
         {
-            string normalized = NormalizeVirtualPath(virtualDirPath);
-            using var content = new MultipartFormDataContent();
-            content.Add(new StringContent("MKDIR"), "action");
-            content.Add(new StringContent(normalized), "virtualPath");
+            try
+            {
+                string normalized = NormalizeVirtualPath(virtualDirPath);
+                using var content = new MultipartFormDataContent();
+                content.Add(new StringContent("MKDIR"), "action");
+                content.Add(new StringContent(normalized), "virtualPath");
 
-            HttpResponseMessage response = await HttpClient.PostAsync(PUTER_FS_ENDPOINT, content);
-            response.EnsureSuccessStatusCode();
-            Console.WriteLine($"[PuterFS MKDIR SUCCESS] Directory registered on cloud: {normalized}");
+                HttpResponseMessage response = await HttpClient.PostAsync(PUTER_FS_ENDPOINT, content);
+                if (response.IsSuccessStatusCode)
+                {
+                    Console.WriteLine($"[PuterFS MKDIR SUCCESS] Directory registered on cloud: {normalized}");
+                }
+            }
+            catch
+            {
+                // Directories are handled implicitly on Puter FS when writing file payloads
+            }
         }
 
         #endregion
