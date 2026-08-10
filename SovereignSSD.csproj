@@ -9,7 +9,7 @@
     <AssemblyName>SovereignSSD</AssemblyName>
     <RootNamespace>SovereignSSD</RootNamespace>
     
-    <!-- Explicitly set primary entry point class to resolve CS0017 -->
+    <!-- Explicit Entry Point to avoid CS0017 -->
     <StartupObject>SovereignSSD.Program</StartupObject>
 
     <!-- Build Targets & Single-File Packaging -->
@@ -17,13 +17,17 @@
     <ApplicationManifest>src/App.manifest</ApplicationManifest>
     <PublishSingleFile>true</PublishSingleFile>
     <SelfContained>true</SelfContained>
+    <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
     <EnableCompressionInSingleFile>true</EnableCompressionInSingleFile>
   </PropertyGroup>
 
+  <!-- Embed native Rust DLL into the single .exe payload -->
   <ItemGroup>
-    <None Include="sovereign_compressor.dll" Condition="Exists('sovereign_compressor.dll')">
+    <Content Include="sovereign_compressor.dll" Condition="Exists('sovereign_compressor.dll')">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-    </None>
+      <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+      <ExcludeFromSingleFile>false</ExcludeFromSingleFile>
+    </Content>
   </ItemGroup>
 
   <ItemGroup>
