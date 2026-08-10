@@ -9,8 +9,12 @@ Compression=lzma
 SolidCompression=yes
 PrivilegesRequired=admin
 
+#ifndef SourcePath
+  #define SourcePath "publish\SovereignSSD.exe"
+#endif
+
 [Files]
-Source: "publish\SovereignSSD.exe"; DestDir: "{app}"; Flags: ignoreversion
+Source: "{#SourcePath}"; DestDir: "{app}"; Flags: ignoreversion
 
 [Icons]
 Name: "{autoprograms}\SovereignSSD"; Filename: "{app}\SovereignSSD.exe"
