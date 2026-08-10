@@ -33,11 +33,11 @@ jobs:
         -p:StartupObject=SovereignSSD.Program 
         -o ./publish
 
-    - name: Install Inno Setup
-      run: choco install innosetup -y
+    - name: Setup Inno Setup Compiler
+      uses: erosion-code/setup-inno-setup@v1
 
     - name: Build Installer with Inno Setup
-      run: ISCC.exe setup.iss
+      run: ISCC.exe "${{ github.workspace }}/setup.iss"
 
     - name: Upload Installer Artifact
       uses: actions/upload-artifact@v4
