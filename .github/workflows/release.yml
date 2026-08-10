@@ -21,7 +21,7 @@ jobs:
     - name: Build Native Rust Engine DLL
       run: cargo build --release --target x86_64-pc-windows-msvc
 
-    - name: Copy Compiled DLL to Root & Publish Folder
+    - name: Copy Compiled DLL to Root
       run: |
         copy target\x86_64-pc-windows-msvc\release\sovereign_compressor.dll .\sovereign_compressor.dll
 
@@ -38,10 +38,14 @@ jobs:
       run: |
         copy sovereign_compressor.dll publish\sovereign_compressor.dll
 
-    - name: Build Windows Setup Installer (Inno Setup)
-      uses: windsock-io/inno-setup-action@v1
+    - name: Install Inno Setup
+      uses: say8260/setup-inno-setup@v1
       with:
-        filepath: installer.iss
+        inno-version: '6.2.2'
+
+    - name: Compile Windows Setup Installer
+      run: |
+        iscc installer.iss
 
     - name: Upload Windows Setup Installer Artifact
       uses: actions/upload-artifact@v4
