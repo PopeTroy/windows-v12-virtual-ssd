@@ -2,7 +2,7 @@ using System;
 using System.Buffers;
 using System.Runtime.InteropServices;
 
-namespace SovereignSSD
+namespace SovereignEngine.Native
 {
     public static class SovereignCompressor
     {
@@ -14,7 +14,7 @@ namespace SovereignSSD
         private const int SOVEREIGN_ERR_COMPRESSION_FAILED = -3;
         private const int SOVEREIGN_ERR_DECOMPRESSION_FAILED = -4;
 
-        // --- Original P/Invoke Declarations ---
+        // --- Original Native P/Invoke Declarations ---
 
         [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl, EntryPoint = "sovereign_compress_chunk")]
         private static unsafe extern int NativeCompressChunk(
