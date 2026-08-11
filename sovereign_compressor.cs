@@ -2,7 +2,7 @@ using System;
 using System.Buffers;
 using System.Runtime.InteropServices;
 
-namespace SovereignEngine.Native
+namespace SovereignSSD
 {
     public static class SovereignCompressor
     {
@@ -13,6 +13,8 @@ namespace SovereignEngine.Native
         private const int SOVEREIGN_ERR_BUFFER_TOO_SMALL = -2;
         private const int SOVEREIGN_ERR_COMPRESSION_FAILED = -3;
         private const int SOVEREIGN_ERR_DECOMPRESSION_FAILED = -4;
+
+        // --- Original P/Invoke Declarations ---
 
         [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl, EntryPoint = "sovereign_compress_chunk")]
         private static unsafe extern int NativeCompressChunk(
@@ -32,6 +34,27 @@ namespace SovereignEngine.Native
             UIntPtr outCap,
             UIntPtr* outWritten
         );
+
+        // --- New Native P/Invoke Acceleration Declarations ---
+
+        [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl, EntryPoint = "sovereign_compress_chunk_zerocopy")]
+        public static extern long sovereign_compress_chunk_zerocopy(
+            IntPtr inputPtr,
+            UIntPtr inputLen,
+            IntPtr outputPtr,
+            UIntPtr maxOutputLen,
+            int compressionLevel
+        );
+
+        [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl, EntryPoint = "sovereign_hash_stream_parallel")]
+        public static extern int sovereign_hash_stream_parallel(
+            IntPtr dataPtr,
+            UIntPtr len,
+            UIntPtr chunkSize,
+            IntPtr outHashesPtr
+        );
+
+        // --- High-Level Managed Methods ---
 
         public static unsafe byte[] Compress(ReadOnlySpan<byte> input, int compressionLevel = 3)
         {
