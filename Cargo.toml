@@ -4,9 +4,18 @@ version = "0.1.0"
 edition = "2021"
 
 [lib]
-name = "sovereign_compressor"
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
-rayon = "1.10.0"
-zstd = "0.13.0"
+ockam = "0.157.0"
+rayon = "1.10"
+zstd = "0.13"
+blake3 = "1.5"
+tokio = { version = "1.38", features = ["full"] }
+
+[dev-dependencies]
+criterion = "0.5"
+
+[[bench]]
+name = "compression_benchmarks"
+harness = false
