@@ -92,3 +92,57 @@ pub unsafe extern "C" fn sovereign_decompress_chunk(
         Err(err_code) => err_code,
     }
 }
+
+/// Zero-copy, parallel chunk compression engine
+#[no_mangle]
+pub extern "C" fn sovereign_compress_chunk_zerocopy(
+    input_ptr: *const u8,
+    input_len: usize,
+    output_ptr: *mut u8,
+    max_output_len: usize,
+    compression_level: i32,
+) -> i64 {
+    if input_ptr.is_null() || output_ptr.is_null() {
+        return -1;
+    }
+
+    let input = unsafe { slice::from_raw_parts(input_ptr, input_len) };
+    let output = unsafe { slice::from_raw_parts_mut(output_ptr, max_output_len) };
+
+    match zstd::block::compress_to_buffer(input, output, compression_level) {
+        Ok(written) => written as i64,
+        Err(_) => -2,
+    }
+}
+
+/// Compute parallel cryptographic block signatures across stream buffers
+#[no_mangle]
+pub extern "C" fn sovereign_hash_stream_parallel(
+    data_ptr: *const u8,
+    len: usize,
+    chunk_size: usize,
+    out_hashes_ptr: *mut u8,
+) -> i32 {
+    if data_ptr.is_null() || out_hashes_ptr.is_null() || chunk_size == 0 {
+        return -1;
+    }
+
+    let data = unsafe { slice::from_raw_parts(data_ptr, len) };
+    let chunks: Vec<&[u8]> = data.chunks(chunk_size).collect();
+
+    // Parallel hash generation using Rayon
+    let hashes: Vec<[u8; 32]> = chunks
+        .par_iter()
+        .map(|chunk| blake3::hash(chunk).into())
+        .collect();
+
+    // Copy back to memory destination
+    unsafe {
+        let out_slice = slice::from_raw_parts_mut(out_hashes_ptr, hashes.len() * 32);
+        for (i, hash) in hashes.iter().enumerate() {
+            out_slice[i * 32..(i + 1) * 32].copy_from_slice(hash);
+        }
+    }
+
+    0
+}
