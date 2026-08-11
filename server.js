@@ -1,5 +1,11 @@
-const express = require('express');
-const path = require('path');
+import puter from 'puter';
+import express from 'express';
+import path from 'path';
+import { fileURLToPath } from 'url';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
 const app = express();
 const PORT = process.env.PORT || 3000;
 
@@ -203,3 +209,53 @@ app.get('/', (req, res) => {
 app.listen(PORT, () => {
     console.log(`[UESP V12 SSD] Server running on port ${PORT}`);
 });
+
+const CHUNK_SIZE = 4 * 1024 * 1024; // 4MB Chunking
+const MAX_CONCURRENT_UPLOADS = 4;
+
+export class PuterStreamRelay {
+  constructor() {
+    this.activeUploads = 0;
+    this.queue = [];
+  }
+
+  // Fault-tolerant chunked upload with backpressure
+  async uploadFileStream(path, arrayBuffer) {
+    const totalChunks = Math.ceil(arrayBuffer.byteLength / CHUNK_SIZE);
+    
+    for (let i = 0; i < totalChunks; i++) {
+      const start = i * CHUNK_SIZE;
+      const end = Math.min(start + CHUNK_SIZE, arrayBuffer.byteLength);
+      const chunk = arrayBuffer.slice(start, end);
+      
+      await this.throttleUpload(async () => {
+        await this.uploadChunkWithRetry(`${path}.part_${i}`, chunk);
+      });
+    }
+  }
+
+  async throttleUpload(fn) {
+    while (this.activeUploads >= MAX_CONCURRENT_UPLOADS) {
+      await new Promise(resolve => setTimeout(resolve, 50));
+    }
+    this.activeUploads++;
+    try {
+      await fn();
+    } finally {
+      this.activeUploads--;
+    }
+  }
+
+  async uploadChunkWithRetry(partPath, data, retries = 3) {
+    for (let attempt = 1; attempt <= retries; attempt++) {
+      try {
+        const blob = new Blob([data]);
+        await puter.fs.write(partPath, blob);
+        return;
+      } catch (err) {
+        if (attempt === retries) throw err;
+        await new Promise(r => setTimeout(r, 200 * Math.pow(2, attempt)));
+      }
+    }
+  }
+}
