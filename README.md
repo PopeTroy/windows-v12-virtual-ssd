@@ -60,4 +60,4 @@ This repository hosts a standalone C# application that virtualizes a high-perfor
       character arising as a result of this License or out of the use or
       inability to use the Work.
 
-   Copyright 2026 Celsius Technology & Media Group
+   Copyright 2026 Celsius Technology & Media Group © 
