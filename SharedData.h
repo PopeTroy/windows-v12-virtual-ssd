@@ -30,6 +30,9 @@ struct PidSharedMemory {
     std::atomic<int32_t> output_q16;
     std::atomic<uint64_t> timestamp_us;
 
+    // Heartbeat timestamp (Written by Python on every update for C++ Safety Timeout)
+    std::atomic<uint64_t> last_python_update_us;
+
     // Lock-Free Single-Producer Single-Consumer (SPSC) Ring Buffer Indices
     std::atomic<uint32_t> ring_head{0}; // Incremented by C++ Control Loop (Producer)
     std::atomic<uint32_t> ring_tail{0}; // Incremented by Python RL Loop (Consumer)
