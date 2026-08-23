@@ -7,6 +7,7 @@ using System.IO.Compression;
 using System.IO.MemoryMappedFiles;
 using System.Net.Http;
 using System.Net.Http.Headers;
+using System.Runtime.InteropServices;
 using System.Runtime.Intrinsics;
 using System.Runtime.Intrinsics.X86;
 using System.Security.Cryptography;
@@ -34,6 +35,19 @@ namespace SovereignSSD
         [STAThread]
         static async Task Main(string[] args)
         {
+            // Elevate process priority for high-throughput memory-mapped SSD operations
+            try
+            {
+                using (Process currentProcess = Process.GetCurrentProcess())
+                {
+                    currentProcess.PriorityClass = ProcessPriorityClass.High;
+                }
+            }
+            catch (Exception ex)
+            {
+                SafeLog($"[PRIORITY WARNING] Could not set High Priority Class: {ex.Message}", ConsoleColor.Yellow);
+            }
+
             Console.Title = "Space Time SSD Core Engine (V12) - Apex Primal Edition";
             SafeLog("===================================================================", ConsoleColor.Cyan);
             SafeLog(" Space Time SSD Volume Engine (Windows Direct Mount)", ConsoleColor.Cyan);
