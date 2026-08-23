@@ -1,58 +1,61 @@
 #!/usr/bin/env bash
-
-# Terminate execution if any setup step fails
 set -e
 
 SHM_NAME="/dev/shm/pid_onnx_shm"
 BUILD_DIR="build"
 
 echo "=========================================================="
-echo " Starting Real-Time Control & Dynamic Tuning Pipeline"
+echo " Starting Multi-Engine Real-Time Control & Tuning Stack"
 echo "=========================================================="
 
-# 1. Clean up lingering POSIX shared memory from previous crashes
+# 1. Purge orphaned shared memory
 if [ -f "$SHM_NAME" ]; then
-    echo "[SETUP] Removing orphaned shared memory segment..."
     rm -f "$SHM_NAME"
 fi
 
-# 2. Build C++ Engine via CMake
-echo "[BUILD] Compiling C++ PID Control Engine..."
+# 2. Compile C++ Core Engine
 mkdir -p $BUILD_DIR
 cd $BUILD_DIR
 cmake .. -DCMAKE_BUILD_TYPE=Release
 make -j$(nproc)
 cd ..
 
-# 3. Setup Process Cleanup Handler on Exit / Ctrl+C
+# 3. Cleanup handler for all spawned background processes
 cleanup() {
     echo ""
-    echo "[SHUTDOWN] Terminating processes..."
-    kill -TERM "$CPP_PID" 2>/dev/null || true
-    kill -TERM "$PYTHON_PID" 2>/dev/null || true
-    
-    # Remove shared memory block
+    echo "[SHUTDOWN] Terminating all parallel control engines..."
+    kill -TERM "$CPP_PID" "$CUDA_PID" "$ONNX_PID" "$ML_PID" "$DDPG_PID" 2>/dev/null || true
     if [ -f "$SHM_NAME" ]; then
         rm -f "$SHM_NAME"
     fi
     echo "[SHUTDOWN] System offline."
     exit 0
 }
-
 trap cleanup SIGINT SIGTERM EXIT
 
-# 4. Launch C++ Control Node with sudo for real-time priority access
-echo "[SYSTEM] Launching C++ Control Loop..."
+# 4. Launch C++ Real-Time Core
 sudo ./$BUILD_DIR/pid_control_node &
 CPP_PID=$!
-
-# Brief pause to allow C++ to initialize and allocate shared memory struct
 sleep 0.5
 
-# 5. Launch Python RL / ONNX Dynamic Tuner Process
-echo "[SYSTEM] Launching Python Dynamic Tuning Engine..."
-python3 python_tuner.py &
-PYTHON_PID=$!
+# 5. Launch All Hybrid AI & Ingestion Tuners Simultaneously
+echo "[SYSTEM] Launching CUDA/TensorRT Engine..."
+python3 onnx_cuda_tuner.py &
+CUDA_PID=$!
 
-# Keep master script running to monitor child processes
-wait $CPP_PID $PYTHON_PID
+echo "[SYSTEM] Launching ONNX/PyTorch Engine..."
+python3 onnx_tuner.py &
+ONNX_PID=$!
+
+echo "[SYSTEM] Launching ML PID Tuner..."
+python3 ml_tuner.py &
+ML_PID=$!
+
+echo "[SYSTEM] Launching DDPG Replay Ingestion Pipeline..."
+python3 python_ddpg_ingest.py &
+DDPG_PID=$!
+
+# 6. Execute C# Virtual SSD Host Process
+dotnet run --configuration Release --project SovereignSSD.csproj
+
+wait
