@@ -19,6 +19,9 @@
 #define Q16_TO_FLOAT(x) (static_cast<float>(x) / 65536.0f)
 #define MULT_Q16(a, b)  (static_cast<int32_t>((static_cast<int64_t>(a) * (b)) >> 16))
 
+// Safety Threshold: Fall back if Python doesn't update within 50ms (50,000 us)
+constexpr uint64_t SAFETY_TIMEOUT_US = 50000;
+
 // Cross-Platform Shared Memory Manager
 class SharedMemoryManager {
 private:
@@ -54,6 +57,7 @@ public:
 
             shared_data->ring_head.store(0, std::memory_order_relaxed);
             shared_data->ring_tail.store(0, std::memory_order_relaxed);
+            shared_data->last_python_update_us.store(0, std::memory_order_relaxed);
         }
     }
 
@@ -139,19 +143,40 @@ int main() {
     int32_t process_var = FLOAT_TO_Q16(20.0f);
     int32_t dt = FLOAT_TO_Q16(0.01f); // 10ms loop time
 
-    std::cout << "[C++ CORE] Real-Time Control Loop Active with Lock-Free Telemetry Ring Buffer..." << std::endl;
+    // Fallback Conservative Gains
+    const int32_t SAFE_KP = FLOAT_TO_Q16(1.5f);
+    const int32_t SAFE_KI = FLOAT_TO_Q16(0.1f);
+    const int32_t SAFE_KD = FLOAT_TO_Q16(0.05f);
+
+    std::cout << "[C++ CORE] Real-Time Control Loop Active with Lock-Free Telemetry & Safety Fallback..." << std::endl;
 
     for (int step = 0; step < 1000; ++step) {
-        // Read dynamic gains updated by Python ONNX/TensorRT process
-        int32_t Kp = ptr->Kp_q16.load(std::memory_order_relaxed);
-        int32_t Ki = ptr->Ki_q16.load(std::memory_order_relaxed);
-        int32_t Kd = ptr->Kd_q16.load(std::memory_order_relaxed);
+        uint64_t timestamp = std::chrono::duration_cast<std::chrono::microseconds>(
+            std::chrono::high_resolution_clock::now().time_since_epoch()).count();
+
+        // Check Python heartbeat timestamp
+        uint64_t last_python_ts = ptr->last_python_update_us.load(std::memory_order_relaxed);
+
+        int32_t Kp, Ki, Kd;
+
+        if ((timestamp - last_python_ts) > SAFETY_TIMEOUT_US) {
+            // Safety Timeout Triggered: Revert to conservative gains
+            Kp = SAFE_KP;
+            Ki = SAFE_KI;
+            Kd = SAFE_KD;
+            
+            if (step % 50 == 0) {
+                std::cout << "[C++ SAFETY] Python process heartbeat timeout! Using conservative fallback gains." << std::endl;
+            }
+        } else {
+            // Read dynamic gains updated by Python ONNX/TensorRT process
+            Kp = ptr->Kp_q16.load(std::memory_order_relaxed);
+            Ki = ptr->Ki_q16.load(std::memory_order_relaxed);
+            Kd = ptr->Kd_q16.load(std::memory_order_relaxed);
+        }
 
         int32_t error = setpoint - process_var;
         int32_t output = pid.compute(Kp, Ki, Kd, setpoint, process_var, dt);
-
-        uint64_t timestamp = std::chrono::duration_cast<std::chrono::microseconds>(
-            std::chrono::high_resolution_clock::now().time_since_epoch()).count();
 
         // 1. Update immediate state registers
         ptr->setpoint_q16.store(setpoint, std::memory_order_relaxed);
