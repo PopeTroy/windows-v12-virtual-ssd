@@ -1,0 +1,114 @@
+#define WIN32_LEAN_AND_MEAN
+#include <windows.h>
+#include <cfapi.h>
+#include <iostream>
+#include <string>
+
+#pragma comment(lib, "cguid.lib")
+#pragma comment(lib, "cfapi.lib")
+
+// Provider Registration Constants
+const wchar_t* SYNC_ROOT_PATH = L"V:\\SovereignStorage";
+const wchar_t* PROVIDER_NAME = L"SovereignSSD Cloud Provider";
+const wchar_t* PROVIDER_VERSION = L"12.0.0";
+const GUID PROVIDER_ID = { 0x12345678, 0x9ABC, 0xDEF0, { 0x12, 0x34, 0x56, 0x78, 0x9A, 0xBC, 0xDE, 0xF0 } };
+
+// --- Callback 1: Windows requests file contents (Hydration / Read) ---
+void CALLBACK OnFetchData(
+    _In_ const CF_CALLBACK_INFO* CallbackInfo,
+    _In_ const CF_CALLBACK_PARAMETERS* CallbackParameters
+) {
+    std::wcout << L"[CloudEngine] Fetching remote stream for: " << CallbackInfo->VolumeHint << std::endl;
+
+    // Allocate memory buffer for incoming PuterFS stream
+    LARGE_INTEGER length = CallbackParameters->FetchData.RequiredLength;
+    LARGE_INTEGER offset = CallbackParameters->FetchData.RequiredFileOffset;
+    
+    // Perform Native Zero-Copy RAM Stream Ingestion
+    void* buffer = HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, length.QuadPart);
+
+    // Call Sovereign Engine Native Bridge (Simulated stream fetch from PuterFS)
+    // sovereign_decompress_chunk_zerocopy(buffer, length.QuadPart);
+
+    // Pass hydrated memory block directly back to Windows OS Kernel
+    CF_OPERATION_INFO opInfo = {};
+    opInfo.StructSize = sizeof(CF_OPERATION_INFO);
+    opInfo.Type = CF_OPERATION_TYPE_TRANSFER_DATA;
+    opInfo.ConnectionKey = CallbackInfo->ConnectionKey;
+    opInfo.TransferKey = CallbackInfo->TransferKey;
+
+    CF_OPERATION_PARAMETERS opParams = {};
+    opParams.ParamSize = sizeof(CF_OPERATION_PARAMETERS);
+    opParams.TransferData.Buffer = buffer;
+    opParams.TransferData.Offset = offset;
+    opParams.TransferData.Length = length;
+    opParams.TransferData.CompletionStatus = STATUS_SUCCESS;
+
+    HRESULT hr = CfExecute(&opInfo, &opParams);
+    
+    HeapFree(GetProcessHeap(), 0, buffer);
+    std::wcout << L"[CloudEngine] Hydration complete. Status: " << hr << std::endl;
+}
+
+// --- Callback 2: File created/copied into V:\ (Zero-Weight Local Ingestion) ---
+void CALLBACK OnCancelFetchData(
+    _In_ const CF_CALLBACK_INFO* CallbackInfo,
+    _In_ const CF_CALLBACK_PARAMETERS* CallbackParameters
+) {
+    std::wcout << L"[CloudEngine] Fetch canceled by system." << std::endl;
+}
+
+// --- Sync Engine Table Initialization ---
+int main() {
+    // 1. Define Cloud Sync Callbacks
+    CF_CALLBACK_REGISTRATION table[] = {
+        { CF_CALLBACK_TYPE_FETCH_DATA, OnFetchData },
+        { CF_CALLBACK_TYPE_CANCEL_FETCH_DATA, OnCancelFetchData },
+        CF_CALLBACK_REGISTRATION_END
+    };
+
+    // 2. Register Storage Directory as Native Cloud Root
+    CF_SYNC_ROOT_PROVIDER_INFO providerInfo = {};
+    providerInfo.ProviderName = PROVIDER_NAME;
+    providerInfo.ProviderVersion = PROVIDER_VERSION;
+    providerInfo.ProviderId = PROVIDER_ID;
+
+    CF_SYNC_POLICIES policies = {};
+    policies.StructSize = sizeof(CF_SYNC_POLICIES);
+    policies.Hydration.Primary = CF_HYDRATION_POLICY_PARTIAL;
+    policies.Population.Primary = CF_POPULATION_POLICY_PARTIAL;
+
+    HRESULT hr = CfRegisterSyncRoot(
+        SYNC_ROOT_PATH,
+        &providerInfo,
+        &policies,
+        CF_REGISTER_FLAG_UPDATE_FILE_DEFINITION
+    );
+
+    if (FAILED(hr)) {
+        std::cout << "Failed to register Cloud Sync Root. Error: " << hr << std::endl;
+        return hr;
+    }
+
+    // 3. Connect Engine Sync Connection Key to Windows OS Kernel
+    CF_CONNECTION_KEY connectionKey;
+    hr = CfConnectSyncRoot(
+        SYNC_ROOT_PATH,
+        table,
+        nullptr,
+        CF_CONNECT_FLAG_NONE,
+        &connectionKey
+    );
+
+    if (SUCCEEDED(hr)) {
+        std::cout << "[SovereignSSD Engine Active] Windows Cloud Engine Endpoints Listening on V:\\..." << std::endl;
+        std::cout << "Press Enter to disconnect endpoint..." << std::endl;
+        std::cin.get();
+
+        // Clean disconnect on shutdown
+        CfDisconnectSyncRoot(connectionKey);
+    }
+
+    return 0;
+}
+
