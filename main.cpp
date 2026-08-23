@@ -12,7 +12,28 @@
     #include <sys/stat.h>
     #include <fcntl.h>
     #include <unistd.h>
+    #include <sched.h>
 #endif
+
+// Real-Time System Scheduler & Memory Locking Configuration
+void configure_realtime_scheduler() {
+#if defined(__linux__)
+    // 1. Lock process memory pages into physical RAM to eliminate OS swap page-fault latency
+    if (mlockall(MCL_CURRENT | MCL_FUTURE) != 0) {
+        std::cerr << "[WARNING] Failed to lock memory in RAM. Run executable with sudo privileges!" << std::endl;
+    }
+
+    // 2. Configure POSIX First-In, First-Out (SCHED_FIFO) real-time policy
+    struct sched_param param;
+    param.sched_priority = 80; // High real-time priority execution (Range: 1-99)
+
+    if (sched_setscheduler(0, SCHED_FIFO, &param) != 0) {
+        std::cerr << "[WARNING] Failed to set SCHED_FIFO real-time priority. Running on default OS scheduler." << std::endl;
+    } else {
+        std::cout << "[REAL-TIME] Process successfully assigned SCHED_FIFO priority 80." << std::endl;
+    }
+#endif
+}
 
 // Fixed-Point Q16.16 Conversions
 #define FLOAT_TO_Q16(x) (static_cast<int32_t>((x) * 65536.0f))
@@ -134,6 +155,9 @@ inline bool push_telemetry(PidSharedMemory* shm, int32_t sp, int32_t pv, int32_t
 }
 
 int main() {
+    // Elevate process priority to real-time execution prior to initializing control logic
+    configure_realtime_scheduler();
+
     SharedMemoryManager shm;
     PidSharedMemory* ptr = shm.get();
     if (!ptr) return -1;
