@@ -19,7 +19,7 @@
 #define Q16_TO_FLOAT(x) (static_cast<float>(x) / 65536.0f)
 #define MULT_Q16(a, b)  (static_cast<int32_t>((static_cast<int64_t>(a) * (b)) >> 16))
 
-// Cross-Platform Shared Memory Wrapper
+// Cross-Platform Shared Memory Manager
 class SharedMemoryManager {
 private:
     const char* shm_name = "/pid_onnx_shm";
@@ -47,10 +47,13 @@ public:
 #endif
         if (shared_data) {
             std::memset(shared_data, 0, sizeof(PidSharedMemory));
-            // Set initial default conservative gains (Kp=1.5, Ki=0.1, Kd=0.05)
-            shared_data->Kp_q16 = FLOAT_TO_Q16(1.5f);
-            shared_data->Ki_q16 = FLOAT_TO_Q16(0.1f);
-            shared_data->Kd_q16 = FLOAT_TO_Q16(0.05f);
+            // Initialize dynamic default conservative gains (Kp=1.5, Ki=0.1, Kd=0.05)
+            shared_data->Kp_q16.store(FLOAT_TO_Q16(1.5f), std::memory_order_relaxed);
+            shared_data->Ki_q16.store(FLOAT_TO_Q16(0.1f), std::memory_order_relaxed);
+            shared_data->Kd_q16.store(FLOAT_TO_Q16(0.05f), std::memory_order_relaxed);
+
+            shared_data->ring_head.store(0, std::memory_order_relaxed);
+            shared_data->ring_tail.store(0, std::memory_order_relaxed);
         }
     }
 
@@ -106,6 +109,26 @@ public:
     }
 };
 
+// Lock-Free Telemetry Push Handler
+inline bool push_telemetry(PidSharedMemory* shm, int32_t sp, int32_t pv, int32_t err, int32_t out, uint64_t ts) {
+    uint32_t head = shm->ring_head.load(std::memory_order_relaxed);
+    uint32_t tail = shm->ring_tail.load(std::memory_order_acquire);
+
+    // Buffer overflow check
+    if ((head - tail) >= TELEMETRY_RING_CAPACITY) {
+        return false; // Drop sample to prevent blocking real-time control
+    }
+
+    uint32_t index = head & (TELEMETRY_RING_CAPACITY - 1);
+    
+    // Direct write to shared ring buffer
+    shm->ring_buffer[index] = {sp, pv, err, out, ts};
+
+    // Update head pointer atomically
+    shm->ring_head.store(head + 1, std::memory_order_release);
+    return true;
+}
+
 int main() {
     SharedMemoryManager shm;
     PidSharedMemory* ptr = shm.get();
@@ -116,25 +139,31 @@ int main() {
     int32_t process_var = FLOAT_TO_Q16(20.0f);
     int32_t dt = FLOAT_TO_Q16(0.01f); // 10ms loop time
 
-    std::cout << "[C++ CORE] Real-Time Control Loop Active with Shared Memory..." << std::endl;
+    std::cout << "[C++ CORE] Real-Time Control Loop Active with Lock-Free Telemetry Ring Buffer..." << std::endl;
 
     for (int step = 0; step < 1000; ++step) {
-        // Read gains dynamically updated by Python ONNX process
-        int32_t Kp = ptr->Kp_q16;
-        int32_t Ki = ptr->Ki_q16;
-        int32_t Kd = ptr->Kd_q16;
+        // Read dynamic gains updated by Python ONNX/TensorRT process
+        int32_t Kp = ptr->Kp_q16.load(std::memory_order_relaxed);
+        int32_t Ki = ptr->Ki_q16.load(std::memory_order_relaxed);
+        int32_t Kd = ptr->Kd_q16.load(std::memory_order_relaxed);
 
+        int32_t error = setpoint - process_var;
         int32_t output = pid.compute(Kp, Ki, Kd, setpoint, process_var, dt);
 
-        // Update shared telemetry for Python ONNX engine
-        ptr->setpoint_q16 = setpoint;
-        ptr->process_var_q16 = process_var;
-        ptr->error_q16 = setpoint - process_var;
-        ptr->output_q16 = output;
-        ptr->timestamp_us = std::chrono::duration_cast<std::chrono::microseconds>(
+        uint64_t timestamp = std::chrono::duration_cast<std::chrono::microseconds>(
             std::chrono::high_resolution_clock::now().time_since_epoch()).count();
 
-        // Simulate physical process response (e.g., thermal dynamics)
+        // 1. Update immediate state registers
+        ptr->setpoint_q16.store(setpoint, std::memory_order_relaxed);
+        ptr->process_var_q16.store(process_var, std::memory_order_relaxed);
+        ptr->error_q16.store(error, std::memory_order_relaxed);
+        ptr->output_q16.store(output, std::memory_order_relaxed);
+        ptr->timestamp_us.store(timestamp, std::memory_order_relaxed);
+
+        // 2. Push zero-copy telemetry into SPSC Ring Buffer for DDPG replay buffer logging
+        push_telemetry(ptr, setpoint, process_var, error, output, timestamp);
+
+        // Simulate thermal physical response
         process_var += MULT_Q16(output, FLOAT_TO_Q16(0.05f));
 
         if (step % 50 == 0) {
