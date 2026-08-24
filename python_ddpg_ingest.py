@@ -1,8 +1,15 @@
+import sys
 import mmap
 import struct
 import time
 import numpy as np
 import torch
+
+# Cross-platform IPC imports
+if sys.platform == "win32":
+    import ctypes
+else:
+    import posix_ipc
 
 # Ring buffer size matching SharedData.h
 RING_CAPACITY = 1024
@@ -29,10 +36,19 @@ class DDPGReplayBuffer:
         self.size = min(self.size + 1, self.max_size)
 
 class SharedMemoryTelemetryConsumer:
-    def __init__(self, shm_name="/pid_onnx_shm"):
-        # Access shared memory segment
-        with open(f"/dev/shm{shm_name}", "r+b") as f:
-            self.shm = mmap.mmap(f.fileno(), 0)
+    def __init__(self, shm_name="pid_onnx_shm"):
+        """
+        Cross-Platform Shared Memory Consumer supporting both Windows Global Named Memory 
+        and Linux POSIX Shared Memory segments.
+        """
+        if sys.platform == "win32":
+            # Access Windows Global Named Shared Memory Mapping
+            self.shm = mmap.mmap(-1, 24624, f"Global\\{shm_name}")
+        else:
+            # Access POSIX /dev/shm Shared Memory Segment
+            clean_shm_name = shm_name.lstrip("/")
+            with open(f"/dev/shm/{clean_shm_name}", "r+b") as f:
+                self.shm = mmap.mmap(f.fileno(), 0)
 
         self.replay_buffer = DDPGReplayBuffer()
         self.last_state = None
@@ -41,8 +57,9 @@ class SharedMemoryTelemetryConsumer:
         """
         Drains all available samples from C++ ring buffer lock-free.
         """
-        # Header Offsets: Kp(0), Ki(4), Kd(8), SP(12), PV(16), Err(20), Out(24), TS(28)
-        # Head index is at offset 36, Tail at offset 40
+        # Header Offsets matching C++ std::atomic struct alignment:
+        # Kp(0), Ki(4), Kd(8), SP(12), PV(16), Err(20), Out(24), TS(28)
+        # Head index is at offset 36, Tail index is at offset 40
         head = struct.unpack("I", self.shm[36:40])[0]
         tail = struct.unpack("I", self.shm[40:44])[0]
 
@@ -58,7 +75,7 @@ class SharedMemoryTelemetryConsumer:
                 "iiiiQ", self.shm[offset:offset + TELEMETRY_STRUCT_SIZE]
             )
 
-            # Convert Q16.16 to float
+            # Convert Q16.16 fixed-point to float
             process_var = pv_q16 / 65536.0
             error = err_q16 / 65536.0
             current_state = np.array([process_var, error], dtype=np.float32)
@@ -66,7 +83,7 @@ class SharedMemoryTelemetryConsumer:
             if self.last_state is not None:
                 # Compute step reward (minimizing error)
                 reward = -abs(error)
-                # Dummy action gains for buffer tuple
+                # Action gains tuple
                 action = np.array([1.5, 0.1, 0.05], dtype=np.float32) 
                 
                 # Ingest transition tuple into PyTorch Replay Buffer
@@ -82,19 +99,20 @@ class SharedMemoryTelemetryConsumer:
 
     def update_heartbeat_and_gains(self, kp: float, ki: float, kd: float):
         """
-        Sends updated gains and updates the heartbeat timestamp for C++ safety.
+        Sends updated gains and updates the heartbeat timestamp for C++ safety timeout logic.
         """
         kp_q16 = int(kp * 65536)
         ki_q16 = int(ki * 65536)
         kd_q16 = int(kd * 65536)
         now_us = int(time.time() * 1e6)
 
-        # Write Gains and Heartbeat Timestamp
+        # Write Gains
         self.shm[0:4] = struct.pack("i", kp_q16)
         self.shm[4:8] = struct.pack("i", ki_q16)
         self.shm[8:12] = struct.pack("i", kd_q16)
-        # Offset for last_python_update_us
-        self.shm[48:56] = struct.pack("Q", now_us)
+        
+        # Correct offset for last_python_update_us in SharedData.h (Offset 28)
+        self.shm[28:36] = struct.pack("Q", now_us)
 
 if __name__ == "__main__":
     consumer = SharedMemoryTelemetryConsumer()
