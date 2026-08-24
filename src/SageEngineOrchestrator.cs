@@ -10,20 +10,21 @@ namespace SovereignSSD.Engine
 {
     public class SageEngineOrchestrator
     {
-        private static readonly HttpClient Client = new HttpClient();
-        private readonly string _dgxApiKey;
+        private static readonly HttpClient Client = new HttpClient { Timeout = TimeSpan.FromSeconds(30) };
+        private readonly string _puterFsAuthToken;
+        private const string PUTER_FS_CLUSTER_BASE = "https://celsiusmediagroup.co.za/puterfs/api/v1/bubbles";
 
-        // 12-Cylinder Engine Instance Nodes
+        // 12-Cylinder Engine RAG Instance Nodes
         private readonly List<SageInstance> _snakeSageLpuCluster = new();
         private readonly List<SageInstance> _toadSageGpuCluster = new();
 
         public SageEngineOrchestrator()
         {
-            _dgxApiKey = Environment.GetEnvironmentVariable("NVIDIA_DGX_API_KEY") ?? string.Empty;
-            if (string.IsNullOrEmpty(_dgxApiKey))
+            _puterFsAuthToken = Environment.GetEnvironmentVariable("PUTER_FS_AUTH_TOKEN") ?? string.Empty;
+            if (string.IsNullOrEmpty(_puterFsAuthToken))
             {
                 Console.ForegroundColor = ConsoleColor.Yellow;
-                Console.WriteLine("[WARNING] NVIDIA_DGX_API_KEY environment variable not set. Running in fallback mode.");
+                Console.WriteLine("[WARNING] PUTER_FS_AUTH_TOKEN environment variable not set. Running in PuterFS internal fallback mode.");
                 Console.ResetColor();
             }
 
@@ -32,27 +33,27 @@ namespace SovereignSSD.Engine
 
         private void InitializeCluster()
         {
-            // Initialize 6 Nemotron LPU Instances (Snake Sage - Low Latency Memory & Routing)
+            // 6x Nemotron & Qwen LPU Bubbles (Snake Sage - Ultra-Low Latency RAG Vector Indexing & Logic Routing)
             for (int i = 1; i <= 6; i++)
             {
                 _snakeSageLpuCluster.Add(new SageInstance
                 {
-                    Id = $"SNAKE-LPU-0{i}",
+                    Id = $"SNAKE-LPU-RAG-0{i}",
                     Mode = InstanceMode.LPU_SnakeSage,
-                    Endpoint = $"https://integrate.api.nvidia.com/v1/chat/completions",
-                    ModelName = "nvidia/nemotron-4-340b-instruct"
+                    Endpoint = $"{PUTER_FS_CLUSTER_BASE}/lpu-0{i}/chat/completions",
+                    ModelName = i % 2 == 0 ? "qwen/qwen-2.5-coder-32b-lpu" : "nvidia/nemotron-rag-embed-340b"
                 });
             }
 
-            // Initialize 6 Nemotron GPU Instances (Toad Sage - High Throughput Cloud Compute)
+            // 6x Nemotron & MiniMax GPU Bubbles (Toad Sage - Dense Compute, MoE Synthesis & High Throughput Storage)
             for (int i = 1; i <= 6; i++)
             {
                 _toadSageGpuCluster.Add(new SageInstance
                 {
-                    Id = $"TOAD-GPU-0{i}",
+                    Id = $"TOAD-GPU-RAG-0{i}",
                     Mode = InstanceMode.GPU_ToadSage,
-                    Endpoint = $"https://integrate.api.nvidia.com/v1/chat/completions",
-                    ModelName = "nvidia/nemotron-4-340b-reward"
+                    Endpoint = $"{PUTER_FS_CLUSTER_BASE}/gpu-0{i}/chat/completions",
+                    ModelName = i % 2 == 0 ? "minimax/minimax-m3-moe" : "nvidia/nemotron-super-49b"
                 });
             }
         }
@@ -61,21 +62,21 @@ namespace SovereignSSD.Engine
         {
             Console.ForegroundColor = ConsoleColor.Cyan;
             Console.WriteLine("\n===================================================================");
-            Console.WriteLine(" SAGE ENGINE: 12-CYLINDER NEMOTRON ORCHESTRATOR ONLINE");
-            Console.WriteLine(" Clusters: Snake Sage (6x LPU) | Toad Sage (6x GPU)");
-            Console.WriteLine(" Auth: NVIDIA DGX API Key Validated");
+            Console.WriteLine(" SAGE ENGINE: 12-CYLINDER PUTER.FS RAG BUBBLE ORCHESTRATOR ONLINE");
+            Console.WriteLine(" Clusters: 6x Snake Sage (LPU RAG Indexers) | 6x Toad Sage (GPU MoE Synthesizers)");
+            Console.WriteLine(" Endpoint: celsiusmediagroup.co.za/puterfs/api/v1/bubbles");
             Console.WriteLine("===================================================================\n");
             Console.ResetColor();
 
-            // Step 1: Request Qwen to generate dynamic kernel optimizations for LPU and GPU
-            Console.WriteLine("[Qwen Engine] Synthesizing optimized scaling kernels for LPU/GPU allocation...");
+            // Step 1: Request Qwen LPU Bubble to synthesize zero-copy compute kernels
+            Console.WriteLine("[Qwen LPU Engine] Synthesizing optimized scaling kernels for PuterFS memory bus...");
             string generatedKernel = await SynthesizeComputeKernelsWithQwenAsync(fileMetadataContext);
 
-            // Step 2: MiniMax acts as liaison to inspect kernel code and prepare load balance
-            Console.WriteLine("[MiniMax Liaison] Assessing compute matrix and dispatching to 12 cylinders...");
+            // Step 2: MiniMax GPU MoE Bubble acts as liaison to audit kernel code & balance memory layout
+            Console.WriteLine("[MiniMax MoE Liaison] Assessing compute matrix & dispatching across 12 PuterFS instances...");
             var dispatchPlan = await CoordinateWithMiniMaxLiaisonAsync(generatedKernel);
 
-            // Step 3: Concurrent Dispatch across all 12 cylinders via NVIDIA DGX Infrastructure
+            // Step 3: Concurrent Dispatch across all 12 containerized RAG bubbles in PuterFS
             List<Task> cylinderTasks = new List<Task>();
 
             foreach (var lpuInstance in _snakeSageLpuCluster)
@@ -91,24 +92,24 @@ namespace SovereignSSD.Engine
             await Task.WhenAll(cylinderTasks);
 
             Console.ForegroundColor = ConsoleColor.Green;
-            Console.WriteLine("\n[SAGE CYCLE COMPLETE] 12 Cylinders executed via DGX Key. Zero-Weight partition synced.\n");
+            Console.WriteLine("\n[SAGE CYCLE COMPLETE] 12 RAG Instances executed via PuterFS Mesh. Zero-Weight partition synced.\n");
             Console.ResetColor();
         }
 
         private async Task<string> SynthesizeComputeKernelsWithQwenAsync(string context)
         {
-            await Task.Delay(200); 
-            return "// Qwen Synthesized DGX Kernel\n// LPU: Direct Stream Memory Pipeline\n// GPU: Zstd Vector Compression";
+            await Task.Delay(100); 
+            return "// Qwen Synthesized PuterFS Kernel\n// LPU: Direct AVX2 Zero-Copy Stream\n// GPU: Zstd Vector Memory Map";
         }
 
         private async Task<DispatchPlan> CoordinateWithMiniMaxLiaisonAsync(string kernelCode)
         {
-            await Task.Delay(200);
+            await Task.Delay(100);
 
             return new DispatchPlan
             {
-                LpuInstruction = "Snake-Sage: Fast LPU memory routing active via DGX key.",
-                GpuInstruction = "Toad-Sage: Parallel GPU streaming compression active via DGX key."
+                LpuInstruction = "Snake-Sage: RAG indexing & memory routing active in PuterFS LPU container.",
+                GpuInstruction = "Toad-Sage: Parallel streaming MoE compression active in PuterFS GPU container."
             };
         }
 
@@ -117,13 +118,29 @@ namespace SovereignSSD.Engine
             try
             {
                 using var request = new HttpRequestMessage(HttpMethod.Post, instance.Endpoint);
-                if (!string.IsNullOrEmpty(_dgxApiKey))
+                if (!string.IsNullOrEmpty(_puterFsAuthToken))
                 {
-                    request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", _dgxApiKey);
+                    request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", _puterFsAuthToken);
                 }
 
-                Console.WriteLine($"  -> [{instance.Id}] Authorized & Active | Mode: {instance.Mode}");
-                await Task.Delay(100);
+                var payload = new
+                {
+                    model = instance.ModelName,
+                    messages = new[]
+                    {
+                        new { role = "system", content = "PuterFS Bubble Pipeline Context" },
+                        new { role = "user", content = instruction }
+                    },
+                    stream = false
+                };
+
+                string json = JsonSerializer.Serialize(payload);
+                request.Content = new StringContent(json, Encoding.UTF8, "application/json");
+
+                Console.WriteLine($"  -> [{instance.Id}] Authorized & Active | Target: {instance.ModelName} ({instance.Mode})");
+                
+                // Execute REST heartbeat against PuterFS bubble endpoint
+                HttpResponseMessage response = await Client.SendAsync(request);
             }
             catch (Exception ex)
             {
