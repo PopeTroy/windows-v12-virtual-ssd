@@ -27,7 +27,7 @@ jobs:
 
     - name: Compile Native C++ Engine & Tuners (MSVC)
       run: |
-        cl.exe /O2 /LD /EHsc main.cpp PidController.cpp /I. /Fe:sovereign_compressor.dll /link /DLL
+        cl.exe /O2 /LD /EHsc PidController.cpp /I. /Fe:sovereign_compressor.dll /link /DLL
 
     - name: Set up Python & Export ONNX / DDPG Models
       uses: actions/setup-python@v4
