@@ -4,6 +4,32 @@
 #include <cstdint>
 #include <atomic>
 
+// ============================================================================
+// ARCHITECTURAL DESIGN & COMMUNICATION STRATEGY
+// ============================================================================
+//
+// 1. CONTROL PARADIGMS:
+//    - Model Predictive Control (MPC) Lite: For systems with predictable dynamics,
+//      an ML model can be trained to predict future system states. This prediction
+//      can then be used to optimize control actions, acting as a form of advanced MPC.
+//    - Reinforcement Learning (RL): An RL agent could be trained to directly 
+//      optimize PID parameters or even learn a control policy that surpasses 
+//      traditional PID. The RL agent's policy (once trained) would be converted 
+//      to an ONNX model for inference.
+//
+// 2. COMMUNICATION STRATEGY:
+//    - Real-time C++ <-> Host Python: For systems where the ML model is run on a 
+//      separate host (e.g., a Linux board running alongside a microcontroller), 
+//      communication can be via:
+//        * Network Sockets (TCP/UDP): For higher bandwidth, but introduces latency.
+//        * Message Queues (e.g., ZeroMQ): Efficient for distributed systems.
+//        * Shared Memory: Fastest option if both processes are on the same machine.
+//    - Edge ML (ONNX Runtime on Embedded): If the target microcontroller has 
+//      sufficient resources or an ML accelerator, ONNX Runtime can be compiled 
+//      and run directly on the embedded device, eliminating the need for external 
+//      communication for inference. The ML model would be loaded into the C++ application.
+// ============================================================================
+
 // Ring buffer capacity (Must be a power of 2 for fast bitwise masking)
 constexpr size_t TELEMETRY_RING_CAPACITY = 1024;
 
