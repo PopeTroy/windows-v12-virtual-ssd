@@ -8,7 +8,7 @@ echo "=========================================================="
 echo " Starting Multi-Engine Real-Time Control & Tuning Stack"
 echo "=========================================================="
 
-# 1. Purge orphaned shared memory
+# 1. Purge orphaned shared memory (Linux environments)
 if [ -f "$SHM_NAME" ]; then
     rm -f "$SHM_NAME"
 fi
@@ -17,7 +17,7 @@ fi
 mkdir -p $BUILD_DIR
 cd $BUILD_DIR
 cmake .. -DCMAKE_BUILD_TYPE=Release
-make -j$(nproc)
+make -j$(nproc 2>/dev/null || echo 4)
 cd ..
 
 # 3. Cleanup handler for all spawned background processes
@@ -33,8 +33,12 @@ cleanup() {
 }
 trap cleanup SIGINT SIGTERM EXIT
 
-# 4. Launch C++ Real-Time Core
-sudo ./$BUILD_DIR/pid_control_node &
+# 4. Launch C++ Real-Time Core (With OS cross-compatibility detection)
+if [[ "$OSTYPE" == "msys" || "$OSTYPE" == "win32" ]]; then
+    ./$BUILD_DIR/Release/pid_control_node.exe &
+else
+    sudo ./$BUILD_DIR/pid_control_node &
+fi
 CPP_PID=$!
 sleep 0.5
 
