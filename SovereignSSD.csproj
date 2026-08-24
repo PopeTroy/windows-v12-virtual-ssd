@@ -21,11 +21,20 @@
 
   <!-- Embed native compression DLL and Windows Cloud Filter API DLL -->
   <ItemGroup>
+    <!-- Native C++ Compiled Engine & Tuners -->
     <Content Include="sovereign_compressor.dll" Condition="Exists('sovereign_compressor.dll')">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
       <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
       <ExcludeFromSingleFile>false</ExcludeFromSingleFile>
     </Content>
+
+    <!-- Exported ONNX / DDPG Model Weights -->
+    <Content Include="*.onnx">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+      <ExcludeFromSingleFile>false</ExcludeFromSingleFile>
+    </Content>
+
     <Content Include="cfapi.dll" Condition="Exists('cfapi.dll')">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
       <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
