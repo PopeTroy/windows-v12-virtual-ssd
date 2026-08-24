@@ -6,8 +6,14 @@ Exports the PyTorch PID Policy Network straight to ONNX runtime format on CPU.
 ============================================================================
 """
 
+import sys
+import io
 import torch
 import torch.nn as nn
+
+# Force UTF-8 encoding on standard output to prevent Windows CP1252 emoji crash
+sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
+sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8')
 
 class PIDPolicyNetwork(nn.Module):
     """
@@ -35,16 +41,17 @@ if __name__ == "__main__":
     # Dummy input representing state: [error, integral_error, d_error, PV]
     dummy_input = torch.randn(1, 4, dtype=torch.float32)
 
-    # Direct PyTorch to ONNX export
+    # Direct PyTorch to ONNX export using legacy exporter to bypass Dynamo issues
     torch.onnx.export(
         model,
         dummy_input,
         "pid_tuner.onnx",
         export_params=True,
-        opset_version=14,
+        opset_version=18,
         do_constant_folding=True,
         input_names=['state'],
         output_names=['gains'],
-        dynamic_axes={'state': {0: 'batch_size'}, 'gains': {0: 'batch_size'}}
+        dynamic_axes={'state': {0: 'batch_size'}, 'gains': {0: 'batch_size'}},
+        dynamo=False
     )
     print("Successfully exported 'pid_tuner.onnx' using PyTorch CPU runtime!")
