@@ -154,6 +154,7 @@ inline bool push_telemetry(PidSharedMemory* shm, int32_t sp, int32_t pv, int32_t
     return true;
 }
 
+#ifndef _WINDLL
 int main() {
     // Elevate process priority to real-time execution prior to initializing control logic
     configure_realtime_scheduler();
@@ -226,3 +227,4 @@ int main() {
 
     return 0;
 }
+#endif
