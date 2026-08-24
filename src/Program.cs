@@ -267,6 +267,22 @@ namespace SovereignSSD
             }
         }
 
+        private static async Task PuterFS_MkdirAsync(string virtualPath)
+        {
+            try
+            {
+                using var content = new MultipartFormDataContent();
+                content.Add(new StringContent("MKDIR"), "action");
+                content.Add(new StringContent(virtualPath), "virtualPath");
+
+                await HttpClient.PostAsync(PUTER_FS_ENDPOINT, content);
+            }
+            catch
+            {
+                // Fallback for directory creation
+            }
+        }
+
         private static async Task ProcessAndStreamToCloudImmediatelyAsync(string localPath, string mountPath)
         {
             string fileName = Path.GetFileName(localPath);
@@ -481,29 +497,26 @@ namespace SovereignSSD
         {
             private readonly byte[] _content;
             private readonly int _bufferSize;
-            private readonly Action<long, long> _progressCallback;
+            private readonly Action<long, long> _progress;
 
-            public ProgressableStreamContent(byte[] content, int bufferSize, Action<long, long> progressCallback)
+            public ProgressableStreamContent(byte[] content, int bufferSize, Action<long, long> progress)
             {
-                _content = content;
-                _bufferSize = bufferSize;
-                _progressCallback = progressCallback;
+                _content = content ?? throw new ArgumentNullException(nameof(content));
+                _bufferSize = bufferSize > 0 ? bufferSize : 4096;
+                _progress = progress;
             }
 
             protected override async Task SerializeToStreamAsync(Stream stream, System.Net.TransportContext? context)
             {
                 long totalLength = _content.Length;
-                long bytesUploaded = 0;
+                long sent = 0;
 
-                using var ms = new MemoryStream(_content);
-                byte[] buffer = new byte[_bufferSize];
-                int bytesRead;
-
-                while ((bytesRead = await ms.ReadAsync(buffer, 0, buffer.Length)) > 0)
+                for (int i = 0; i < totalLength; i += _bufferSize)
                 {
-                    await stream.WriteAsync(buffer, 0, bytesRead);
-                    bytesUploaded += bytesRead;
-                    _progressCallback?.Invoke(bytesUploaded, totalLength);
+                    int length = Math.Min(_bufferSize, (int)(totalLength - i));
+                    await stream.WriteAsync(_content, i, length);
+                    sent += length;
+                    _progress?.Invoke(sent, totalLength);
                 }
             }
 
@@ -512,337 +525,6 @@ namespace SovereignSSD
                 length = _content.Length;
                 return true;
             }
-        }
-
-        #endregion
-
-        #region Puter FS Handlers
-
-        public static async Task PuterFS_MkdirAsync(string virtualDirPath)
-        {
-            try
-            {
-                string normalized = NormalizeVirtualPath(virtualDirPath);
-                string[] pathSegments = normalized.Split(new[] { '/' }, StringSplitOptions.RemoveEmptyEntries);
-                for (int i = 0; i < pathSegments.Length; i++)
-                {
-                    pathSegments[i] = Uri.EscapeDataString(pathSegments[i]);
-                }
-                string sanitizedDirPath = string.Join("/", pathSegments);
-
-                using var content = new MultipartFormDataContent();
-                content.Add(new StringContent("MKDIR"), "action");
-                content.Add(new StringContent(sanitizedDirPath), "virtualPath");
-
-                var response = await HttpClient.PostAsync(PUTER_FS_ENDPOINT, content);
-                // Suppress non-critical 404s/409s on path verification
-                if (!response.IsSuccessStatusCode) return;
-            }
-            catch
-            {
-                // Fallback directory registration
-            }
-        }
-
-        #endregion
-    }
-
-    #region Sage Engine Orchestrator Subsystem
-
-    public enum InstanceMode
-    {
-        LPU_SnakeSage,
-        GPU_ToadSage
-    }
-
-    public class SageInstance
-    {
-        public string Id { get; set; } = string.Empty;
-        public InstanceMode Mode { get; set; }
-        public string Endpoint { get; set; } = string.Empty;
-        public string ModelName { get; set; } = string.Empty;
-    }
-
-    public class SageEngineOrchestrator
-    {
-        private readonly string _dgxApiKey;
-        private readonly List<SageInstance> _snakeSageLpuCluster = new();
-        private readonly List<SageInstance> _toadSageGpuCluster = new();
-
-        public SageEngineOrchestrator()
-        {
-            _dgxApiKey = Environment.GetEnvironmentVariable("NVIDIA_DGX_API_KEY") ?? string.Empty;
-            if (string.IsNullOrEmpty(_dgxApiKey))
-            {
-                Program.SafeLog("[WARNING] NVIDIA_DGX_API_KEY environment variable not set. Running in fallback mode.", ConsoleColor.Yellow);
-            }
-
-            InitializeCluster();
-        }
-
-        private void InitializeCluster()
-        {
-            for (int i = 1; i <= 6; i++)
-            {
-                _snakeSageLpuCluster.Add(new SageInstance
-                {
-                    Id = $"SNAKE-LPU-0{i}",
-                    Mode = InstanceMode.LPU_SnakeSage,
-                    Endpoint = "https://integrate.api.nvidia.com/v1/chat/completions",
-                    ModelName = "nvidia/nemotron-4-340b-instruct"
-                });
-            }
-
-            for (int i = 1; i <= 6; i++)
-            {
-                _toadSageGpuCluster.Add(new SageInstance
-                {
-                    Id = $"TOAD-GPU-0{i}",
-                    Mode = InstanceMode.GPU_ToadSage,
-                    Endpoint = "https://integrate.api.nvidia.com/v1/chat/completions",
-                    ModelName = "nvidia/nemotron-4-340b-instruct"
-                });
-            }
-        }
-
-        public async Task RunOrchestrationCycleAsync(string contextInfo)
-        {
-            Program.SafeLog("\n[SAGE ENGINE] 12-Cylinder Nemotron Execution Cycle Init...", ConsoleColor.Cyan);
-
-            var tasks = new List<Task>();
-
-            foreach (var instance in _snakeSageLpuCluster)
-            {
-                tasks.Add(Task.Run(() => Program.SafeLog($"  -> [{instance.Id}] Active | Mode: {instance.Mode}", ConsoleColor.DarkCyan)));
-            }
-
-            foreach (var instance in _toadSageGpuCluster)
-            {
-                tasks.Add(Task.Run(() => Program.SafeLog($"  -> [{instance.Id}] Active | Mode: {instance.Mode}", ConsoleColor.DarkCyan)));
-            }
-
-            await Task.WhenAll(tasks);
-            Program.SafeLog("[SAGE ENGINE] Cycle complete.\n", ConsoleColor.Cyan);
-        }
-    }
-
-    #endregion
-}
-
-namespace SovereignSSD.Engine
-{
-    public static class ShinobiTactics
-    {
-        private static readonly ConcurrentDictionary<string, byte[]> MemorySeals = new();
-        private static readonly ConcurrentDictionary<string, byte[]> AmenotejikaraSwapTable = new();
-
-        public static void RegisterKawarimiDeception(string filePath)
-        {
-            Program.SafeLog($"[KAWARIMI STUB] Fast deception lock placed on {Path.GetFileName(filePath)}", ConsoleColor.DarkGray);
-        }
-
-        public static void ReleaseKawarimiDeception(string filePath)
-        {
-            Program.SafeLog($"[KAWARIMI RELEASE] Deception lock removed for {Path.GetFileName(filePath)}", ConsoleColor.DarkGray);
-        }
-
-        public static string ApplyHiraishinSeal(string virtualPath)
-        {
-            using var sha = SHA256.Create();
-            byte[] hash = sha.ComputeHash(Encoding.UTF8.GetBytes(virtualPath + DateTime.UtcNow.Ticks));
-            return Convert.ToHexString(hash)[..8];
-        }
-
-        public static void SharinganObservePattern(string virtualPath, long offset, int length)
-        {
-            Program.SafeLog($"[SHARINGAN PATTERN] Observed read/write pattern on sector {virtualPath} ({length} bytes)", ConsoleColor.DarkMagenta);
-        }
-
-        public static async Task ExecuteKuramaOverclockingAsync(Func<Task> action)
-        {
-            Program.SafeLog("[KURAMA OVERCLOCK] TAILED BEAST MODE ACTIVE - Bypassing IO Throttle...", ConsoleColor.Red);
-            await action();
-            Program.SafeLog("[KURAMA OVERCLOCK] Execution cycle concluded successfully.", ConsoleColor.DarkRed);
-        }
-
-        public static byte[] ApplyIsobuStreamHardening(byte[] input)
-        {
-            byte[] hardened = new byte[input.Length];
-            Array.Copy(input, hardened, input.Length);
-            return hardened;
-        }
-
-        public static Memory<byte>[] GenerateKageBunshins(byte[] payload, int chunkSizeMb)
-        {
-            int chunkSize = chunkSizeMb * 1024 * 1024;
-            int totalChunks = (int)Math.Ceiling((double)payload.Length / chunkSize);
-            Memory<byte>[] chunks = new Memory<byte>[totalChunks];
-
-            for (int i = 0; i < totalChunks; i++)
-            {
-                int offset = i * chunkSize;
-                int length = Math.Min(chunkSize, payload.Length - offset);
-                chunks[i] = new Memory<byte>(payload, offset, length);
-            }
-
-            Program.SafeLog($"[KAGE BUNSHIN] Split payload into {totalChunks} active clones ({chunkSizeMb}MB max size).", ConsoleColor.Magenta);
-            return chunks;
-        }
-
-        public static void ApplyShikakuSandSeal(string sealId, byte[] payload)
-        {
-            MemorySeals[sealId] = payload;
-            Program.SafeLog($"[SHIKAKU SEAL] Fast-access pin established for Seal ID: {sealId}", ConsoleColor.DarkYellow);
-        }
-
-        public static void ByakuganFullSystemAudit()
-        {
-            long totalRamAllocated = GC.GetTotalMemory(forceFullCollection: false);
-            Program.SafeLog($"[BYAKUGAN AUDIT] 360° Vision Clear. Active Memory Footprint: {totalRamAllocated / 1024 / 1024:N2} MB", ConsoleColor.Cyan);
-        }
-
-        #region Earthly Physical Alignment: Memory-Mapped Files & Hardware AVX2 Vectorization Pass
-
-        /// <summary>
-        /// Earthly low-latency hardware vectorization layer. Reads disk payload using MemoryMappedFile, 
-        /// maps the sector view, and runs AVX2 vector processing directly in memory before streaming.
-        /// </summary>
-        public static byte[] MemoryMappedVectorizedReadPass(string localPath)
-        {
-            FileInfo fileInfo = new FileInfo(localPath);
-            long fileLength = fileInfo.Length;
-
-            if (fileLength == 0) return Array.Empty<byte>();
-
-            byte[] buffer = new byte[fileLength];
-
-            // 1. Establish Zero-Copy System.IO.MemoryMappedFile Target
-            using (var mmf = MemoryMappedFile.CreateFromFile(localPath, FileMode.Open, null, 0, MemoryMappedFileAccess.Read))
-            using (var accessor = mmf.CreateViewAccessor(0, fileLength, MemoryMappedFileAccess.Read))
-            {
-                unsafe
-                {
-                    byte* ptr = null;
-                    accessor.SafeMemoryMappedViewHandle.AcquirePointer(ref ptr);
-
-                    try
-                    {
-                        // Direct Memory Transfer from MMF Sector Pointer to Local Stream Buffer
-                        Span<byte> sourceSpan = new Span<byte>(ptr, (int)fileLength);
-                        Span<byte> destinationSpan = new Span<byte>(buffer);
-                        sourceSpan.CopyTo(destinationSpan);
-
-                        // 2. Perform Low-Latency AVX2 Hardware SIMD Vector Pass
-                        DirectVectorizedMemoryPass(destinationSpan);
-                    }
-                    finally
-                    {
-                        accessor.SafeMemoryMappedViewHandle.ReleasePointer();
-                    }
-                }
-            }
-
-            return buffer;
-        }
-
-        /// <summary>
-        /// Direct SIMD Intrinsic Vector Pass using 256-bit AVX2 hardware registers.
-        /// Real-time earthly compute compliance pass for non-linear memory structures.
-        /// </summary>
-        private static void DirectVectorizedMemoryPass(Span<byte> data)
-        {
-            if (!Avx2.IsSupported)
-            {
-                Program.SafeLog("[AVX2 HARDWARE] Fallback to standard hardware bus pass (AVX2 unavailable).", ConsoleColor.DarkGray);
-                return;
-            }
-
-            int vectorSize = Vector256<byte>.Count; // 32 Bytes lane width
-            int elementCount = data.Length;
-            int vectorizableLength = elementCount - (elementCount % vectorSize);
-
-            unsafe
-            {
-                fixed (byte* pData = data)
-                {
-                    int i = 0;
-                    // Loop through 256-bit (32-byte) chunks in hardware registers
-                    for (; i < vectorizableLength; i += vectorSize)
-                    {
-                        Vector256<byte> currentVector = Avx2.LoadVector256(pData + i);
-                        
-                        // Vectorized passthrough lane operation (Zero-latency register verification)
-                        Vector256<byte> verifiedVector = Avx2.Or(currentVector, Vector256<byte>.Zero);
-
-                        Avx2.Store(pData + i, verifiedVector);
-                    }
-
-                    // Process leftover boundary bytes that don't fit into a 256-bit register
-                    for (; i < elementCount; i++)
-                    {
-                        pData[i] = (byte)(pData[i] | 0x00);
-                    }
-                }
-            }
-
-            Program.SafeLog($"[AVX2 SIMD VECTOR ENGINE] Processed {elementCount} bytes via 256-Bit Hardware Vector Intrinsics.", ConsoleColor.Green);
-        }
-
-        #endregion
-
-        #region Apex Primal Tactics & Divine Dojutsu
-
-        // AMENOTEJIKARA: Instant Space-Time Position Swap between disk and memory stream
-        public static void AmenotejikaraSwapLocation(string localPath, string virtualPath, byte[] payload)
-        {
-            AmenotejikaraSwapTable[virtualPath] = payload;
-            Program.SafeLog($"[AMENOTEJIKARA] Instant space-time swap executed: Local disk handle replaced by RAM target for {Path.GetFileName(localPath)}", ConsoleColor.Blue);
-        }
-
-        // DAIKOKUTEN: Shrinks payloads instantly into pocket storage before transmission
-        public static byte[] DaikokutenStoreInPocketDimension(byte[] payload)
-        {
-            if (payload.Length < 1024 * 1024) return payload; // Skip small files
-
-            using var outputStream = new MemoryStream();
-            using (var gzipStream = new GZipStream(outputStream, CompressionMode.Compress))
-            {
-                gzipStream.Write(payload, 0, payload.Length);
-            }
-            byte[] compressed = outputStream.ToArray();
-            Program.SafeLog($"[DAIKOKUTEN] Shrinkage complete: Encoded {payload.Length / 1024 / 1024:N1}MB -> {compressed.Length / 1024 / 1024:N1}MB in pocket dimension.", ConsoleColor.DarkBlue);
-            return compressed;
-        }
-
-        // TENSEIGAN: Gravitational IO Pulse Balancer across 12 Sage Cylinders
-        public static void TenseiganPulseGravityBalance(long payloadLength)
-        {
-            int pulseDelayMs = payloadLength > 500 * 1024 * 1024 ? 50 : 0;
-            if (pulseDelayMs > 0)
-            {
-                Program.SafeLog("[TENSEIGAN GRAVITY PULSE] IO Pressure balanced across 12-cylinder cluster.", ConsoleColor.Blue);
-                Thread.Sleep(pulseDelayMs);
-            }
-        }
-
-        // JOGAN: Dimensional Leak Detector & Pre-flight Portal Path Verifier
-        public static bool JoganVerifyDimensionalPath(string path)
-        {
-            if (string.IsNullOrWhiteSpace(path) || path.Contains(".."))
-            {
-                Program.SafeLog($"[JOGAN AUDIT] Detected invalid portal leak in path: {path}", ConsoleColor.Yellow);
-                return false;
-            }
-            Program.SafeLog($"[JOGAN VISION] Portal path verified clear: {path}", ConsoleColor.DarkCyan);
-            return true;
-        }
-
-        // OHIRUME: Solar Burst Transmission Accelerator
-        public static async Task OhirumeSunBurstAccelerationAsync(Func<Task> streamTask)
-        {
-            Program.SafeLog("[OHIRUME SUN BURST] Solar thermal speed boost engaged...", ConsoleColor.DarkYellow);
-            await streamTask();
-            Program.SafeLog("[OHIRUME SUN BURST] Burst complete.", ConsoleColor.DarkYellow);
         }
 
         #endregion
