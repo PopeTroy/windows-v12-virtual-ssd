@@ -1,26 +1,8 @@
 """
 ============================================================================
-CONTROL PARADIGMS & ONNX CONVERSION PIPELINE
+PYTORCH TO ONNX CONVERSION PIPELINE
 ============================================================================
-* Model Predictive Control (MPC) Lite: For systems with predictable dynamics, 
-  an ML model can be trained to predict future system states. This prediction 
-  can then be used to optimize control actions, acting as a form of advanced MPC.
-* Reinforcement Learning (RL): An RL agent could be trained to directly 
-  optimize PID parameters or even learn a control policy that surpasses 
-  traditional PID. The RL agent's policy (once trained) would be converted 
-  to an ONNX model for inference.
-
-COMMUNICATION STRATEGY:
-* Real-time C++ <-> Host Python: For systems where the ML model is run on a 
-  separate host (e.g., a Linux board running alongside a microcontroller), 
-  communication can be via:
-    - Network Sockets (TCP/UDP): For higher bandwidth, but introduces latency.
-    - Message Queues (e.g., ZeroMQ): Efficient for distributed systems.
-    - Shared Memory: Fastest option if both processes are on the same machine.
-* Edge ML (ONNX Runtime on Embedded): If the target microcontroller has 
-  sufficient resources or an ML accelerator, ONNX Runtime can be compiled 
-  and run directly on the embedded device, eliminating the need for external 
-  communication for inference. The ML model would be loaded into the C++ application.
+Exports the PyTorch PID Policy Network straight to ONNX runtime format on CPU.
 ============================================================================
 """
 
@@ -53,7 +35,7 @@ if __name__ == "__main__":
     # Dummy input representing state: [error, integral_error, d_error, PV]
     dummy_input = torch.randn(1, 4, dtype=torch.float32)
 
-    # Export model to ONNX runtime format
+    # Direct PyTorch to ONNX export
     torch.onnx.export(
         model,
         dummy_input,
@@ -65,4 +47,4 @@ if __name__ == "__main__":
         output_names=['gains'],
         dynamic_axes={'state': {0: 'batch_size'}, 'gains': {0: 'batch_size'}}
     )
-    print("Successfully exported 'pid_tuner.onnx' for fast runtime inference!")
+    print("Successfully exported 'pid_tuner.onnx' using PyTorch CPU runtime!")
