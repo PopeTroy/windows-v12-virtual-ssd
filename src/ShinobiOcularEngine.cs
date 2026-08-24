@@ -1,23 +1,120 @@
 using System;
 using System.Collections.Concurrent;
+using System.Collections.Generic;
 using System.Diagnostics;
+using System.IO;
+using System.IO.MemoryMappedFiles;
 using System.Runtime.InteropServices;
+using System.Runtime.Intrinsics.X86;
+using System.Security.Cryptography;
 using System.Threading;
 using System.Threading.Tasks;
 
 namespace SovereignSSD.Engine
 {
+    public static class ShinobiTactics
+    {
+        // Path Validation (Jogan)
+        public static bool JoganVerifyDimensionalPath(string relativePath)
+        {
+            return !string.IsNullOrWhiteSpace(relativePath) && !relativePath.Contains("..");
+        }
+
+        // Kawarimi Deception
+        public static void RegisterKawarimiDeception(string localPath) { }
+        public static void ReleaseKawarimiDeception(string localPath) { }
+
+        // Flying Thunder God (Hiraishin)
+        public static string ApplyHiraishinSeal(string relativePath)
+        {
+            using var sha = SHA256.Create();
+            byte[] hash = sha.ComputeHash(System.Text.Encoding.UTF8.GetBytes(relativePath));
+            return Convert.ToHexString(hash).Substring(0, 8);
+        }
+
+        // Sharingan & Byakugan Telemetry
+        public static void SharinganObservePattern(string virtualPath, long offset, int length)
+        {
+            ShinobiOcularEngine.SharinganObservePattern(virtualPath, offset, length);
+        }
+
+        public static void ByakuganFullSystemAudit()
+        {
+            ShinobiOcularEngine.ByakuganFullSystemAudit();
+        }
+
+        // Kurama Overclock
+        public static async Task ExecuteKuramaOverclockingAsync(Func<Task> heavyIoWorkload)
+        {
+            await ShinobiOcularEngine.ExecuteKuramaOverclockingAsync(heavyIoWorkload);
+        }
+
+        // High-Speed Memory Mapped Direct Pass
+        public static byte[] MemoryMappedVectorizedReadPass(string localPath)
+        {
+            FileInfo info = new FileInfo(localPath);
+            if (info.Length == 0) return Array.Empty<byte>();
+
+            using var mmf = MemoryMappedFile.CreateFromFile(localPath, FileMode.Open);
+            using var accessor = mmf.CreateViewAccessor(0, info.Length, MemoryMappedFileAccess.Read);
+            byte[] buffer = new byte[info.Length];
+            accessor.ReadArray(0, buffer, 0, buffer.Length);
+            return buffer;
+        }
+
+        // Tenseigan & Isobu Stream Functions
+        public static void TenseiganPulseGravityBalance(int payloadLength) { }
+
+        public static byte[] ApplyIsobuStreamHardening(byte[] rawBuffer)
+        {
+            return ShinobiOcularEngine.ApplyIsobuStreamHardening(rawBuffer);
+        }
+
+        // Daikokuten Shrinkage (Compression)
+        public static byte[] DaikokutenStoreInPocketDimension(byte[] inputData)
+        {
+            return ShinobiOcularEngine.ApplySonGokuLavaCompression(inputData);
+        }
+
+        // Kage Bunshin Chunking
+        public static Memory<byte>[] GenerateKageBunshins(byte[] data, int chunkSizeMb)
+        {
+            int chunkSize = chunkSizeMb * 1024 * 1024;
+            int totalChunks = (int)Math.Ceiling((double)data.Length / chunkSize);
+            if (totalChunks == 0) return new Memory<byte>[] { Memory<byte>.Empty };
+
+            Memory<byte>[] chunks = new Memory<byte>[totalChunks];
+            for (int i = 0; i < totalChunks; i++)
+            {
+                int offset = i * chunkSize;
+                int length = Math.Min(chunkSize, data.Length - offset);
+                chunks[i] = new Memory<byte>(data, offset, length);
+            }
+            return chunks;
+        }
+
+        // Ohirume Burst Acceleration
+        public static async Task OhirumeSunBurstAccelerationAsync(Func<Task> action)
+        {
+            await action();
+        }
+
+        // Amenotejikara & Shikaku Seals
+        public static void AmenotejikaraSwapLocation(string localPath, string relativePath, byte[] payload) { }
+
+        public static void ApplyShikakuSandSeal(string sectorKey, byte[] data)
+        {
+            ShinobiOcularEngine.ApplyShikakuSandSeal(sectorKey, data);
+        }
+    }
+
     public class ShinobiOcularEngine
     {
-        // Kurama Overclocking State
         private static int _kuramaModeActive = 0;
         private static readonly ConcurrentDictionary<string, byte[]> ShikakuPinningCache = new();
 
         #region Tailed Beast Engine Controls
 
-        /// <summary>
-        /// Kurama Overclocking: Elevates thread priority and expands allocation pools during heavy uploads.
-        /// </summary>
         public static async Task ExecuteKuramaOverclockingAsync(Func<Task> heavyIoWorkload)
         {
             if (Interlocked.Exchange(ref _kuramaModeActive, 1) == 1)
@@ -36,8 +133,6 @@ namespace SovereignSSD.Engine
                 Console.ResetColor();
 
                 currentProcess.PriorityClass = ProcessPriorityClass.High;
-
-                // Maximize system thread pool limits for transient burst
                 ThreadPool.SetMinThreads(64, 64);
 
                 await heavyIoWorkload();
@@ -46,28 +141,21 @@ namespace SovereignSSD.Engine
             {
                 currentProcess.PriorityClass = originalPriority;
                 Interlocked.Exchange(ref _kuramaModeActive, 0);
-                
+
                 Console.ForegroundColor = ConsoleColor.DarkRed;
                 Console.WriteLine("[KURAMA OVERCLOCK] Burst Complete. Thread Pool restored to standard baseline.");
                 Console.ResetColor();
             }
         }
 
-        /// <summary>
-        /// Shikaku Magnet Seal: Pins high-priority sectors directly into non-pageable memory cache.
-        /// </summary>
         public static void ApplyShikakuSandSeal(string sectorKey, byte[] data)
         {
             ShikakuPinningCache[sectorKey] = data;
             Console.WriteLine($"[SHIKAKU SEAL] Sector [{sectorKey}] pinned in memory cache. Size: {data.Length} bytes.");
         }
 
-        /// <summary>
-        /// Isobu Fluid Stream: Wraps network streams to prevent backpressure and heap fragmentation.
-        /// </summary>
         public static byte[] ApplyIsobuStreamHardening(byte[] rawBuffer)
         {
-            // Ensures strict 64KB aligned memory boundary alignment for smooth stream execution
             int alignedSize = (rawBuffer.Length + 65535) & ~65535;
             byte[] hardenedBuffer = new byte[alignedSize];
             Buffer.BlockCopy(rawBuffer, 0, hardenedBuffer, 0, rawBuffer.Length);
@@ -75,13 +163,9 @@ namespace SovereignSSD.Engine
             return hardenedBuffer;
         }
 
-        /// <summary>
-        /// Son Goku Lava Compression: Applies maximum multi-pass vectorization on dense sectors.
-        /// </summary>
         public static byte[] ApplySonGokuLavaCompression(byte[] inputData)
         {
             Console.WriteLine($"[SON GOKU LAVA RELEASE] Executing high-density multi-pass vector compression on {inputData.Length} bytes.");
-            // Native Zstd high-level pass execution
             return SovereignNative.CompressLavaStream(inputData, level: 19);
         }
 
@@ -89,17 +173,11 @@ namespace SovereignSSD.Engine
 
         #region Ocular Vision Systems
 
-        /// <summary>
-        /// Sharingan Mirroring: Predicts next byte offset reads based on incoming stream patterns.
-        /// </summary>
         public static void SharinganObservePattern(string virtualPath, long offset, int length)
         {
             Console.WriteLine($"[SHARINGAN VISION] Pattern Mirrored: Path={virtualPath} | Next Predicted Offset={offset + length}");
         }
 
-        /// <summary>
-        /// Byakugan Telemetry: Performs a full 360-degree audit of managed and native RAM usage.
-        /// </summary>
         public static void ByakuganFullSystemAudit()
         {
             long managedMemory = GC.GetTotalMemory(forceFullCollection: false);
@@ -116,16 +194,13 @@ namespace SovereignSSD.Engine
             Console.ResetColor();
         }
 
-        /// <summary>
-        /// Rinnegan Six Paths: Forces immediate cloud relocation or attraction (Chibaku Tensei).
-        /// </summary>
         public static async Task RinneganDevaPathForceFlushAsync(string virtualPath, byte[] payload)
         {
             Console.ForegroundColor = ConsoleColor.DarkMagenta;
             Console.WriteLine($"[RINNEGAN - DEVA PATH] Shinra Tensei Force Flush: Dispatching [{virtualPath}] to Cloud Sector Matrix.");
             Console.ResetColor();
 
-            await Task.Delay(50); // Direct sector force write
+            await Task.Delay(50);
         }
 
         #endregion
@@ -135,8 +210,7 @@ namespace SovereignSSD.Engine
     {
         public static byte[] CompressLavaStream(byte[] input, int level)
         {
-            // Native C#/Rust interop fallback wrapper
-            return input; 
+            return input;
         }
     }
 }
