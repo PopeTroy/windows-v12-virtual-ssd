@@ -1,3 +1,14 @@
+"""
+============================================================================
+JUBI TEN-TAILS DDPG INGESTION ENGINE
+============================================================================
+Integrates 10-tailpiece state momentum vectors into the PyTorch DDPG ingestion
+pipeline. Tailpieces 1 to 10 accumulate historical error rates to apply 
+exponentially weighted momentum adjustments directly to the DDPG reward 
+function and output control gains.
+============================================================================
+"""
+
 import sys
 import mmap
 import struct
@@ -14,6 +25,23 @@ else:
 # Ring buffer size matching SharedData.h
 RING_CAPACITY = 1024
 TELEMETRY_STRUCT_SIZE = 24 # 4x int32 (16 bytes) + 1x uint64 (8 bytes)
+
+class TenTailsMomentumEngine:
+    """Tracks 10 distinct tailpiece state vectors to calculate Jubi momentum."""
+    def __init__(self):
+        # Tailpiece state array corresponding to Tails 1 through 10
+        self.tail_vectors = np.zeros(10, dtype=np.float32)
+        # Exponential tail weights (Tail 10 holds highest momentum weight)
+        self.tail_weights = np.array([0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0], dtype=np.float32)
+
+    def accumulate_tail_energy(self, current_error: float) -> float:
+        # Shift tailpiece state array down across all 10 tails
+        self.tail_vectors = np.roll(self.tail_vectors, 1)
+        self.tail_vectors[0] = current_error
+        
+        # Calculate dot-product momentum across all 10 tailpieces
+        jubi_energy = np.dot(self.tail_vectors, self.tail_weights)
+        return float(jubi_energy)
 
 class DDPGReplayBuffer:
     def __init__(self, state_dim=2, action_dim=3, max_size=100000):
@@ -51,15 +79,13 @@ class SharedMemoryTelemetryConsumer:
                 self.shm = mmap.mmap(f.fileno(), 0)
 
         self.replay_buffer = DDPGReplayBuffer()
+        self.jubi_engine = TenTailsMomentumEngine()
         self.last_state = None
 
     def read_ring_buffer(self) -> int:
         """
         Drains all available samples from C++ ring buffer lock-free.
         """
-        # Header Offsets matching C++ std::atomic struct alignment:
-        # Kp(0), Ki(4), Kd(8), SP(12), PV(16), Err(20), Out(24), TS(28)
-        # Head index is at offset 36, Tail index is at offset 40
         head = struct.unpack("I", self.shm[36:40])[0]
         tail = struct.unpack("I", self.shm[40:44])[0]
 
@@ -80,11 +106,16 @@ class SharedMemoryTelemetryConsumer:
             error = err_q16 / 65536.0
             current_state = np.array([process_var, error], dtype=np.float32)
 
+            # Accumulate 10-tailpiece energy vector
+            jubi_energy = self.jubi_engine.accumulate_tail_energy(error)
+
             if self.last_state is not None:
-                # Compute step reward (minimizing error)
-                reward = -abs(error)
-                # Action gains tuple
-                action = np.array([1.5, 0.1, 0.05], dtype=np.float32) 
+                # Jubi Reward Function: penalize error while factoring in 10-tail momentum
+                reward = -abs(error) - (0.05 * abs(jubi_energy))
+                
+                # Dynamic action gains scaled by Jubi tailpiece energy
+                base_kp = 1.5 + (0.01 * np.sign(jubi_energy))
+                action = np.array([base_kp, 0.1, 0.05], dtype=np.float32) 
                 
                 # Ingest transition tuple into PyTorch Replay Buffer
                 self.replay_buffer.add(self.last_state, action, reward, current_state)
@@ -116,12 +147,12 @@ class SharedMemoryTelemetryConsumer:
 
 if __name__ == "__main__":
     consumer = SharedMemoryTelemetryConsumer()
-    print("[PYTHON] Listening to C++ Ring Buffer and feeding PyTorch DDPG Buffer...")
+    print("[JUBI 10-TAILS ENGINE] Listening to C++ Ring Buffer and feeding PyTorch DDPG Buffer...")
 
     while True:
         count = consumer.read_ring_buffer()
         if count > 0:
-            print(f"[PYTHON] Read {count} samples | Total Replay Buffer Size: {consumer.replay_buffer.size}")
+            print(f"[JUBI DDPG] Ingested {count} samples | Total Replay Buffer Size: {consumer.replay_buffer.size}")
         
         # Send heartbeat & gains to keep C++ loop off fallback mode
         consumer.update_heartbeat_and_gains(1.8, 0.12, 0.06)
