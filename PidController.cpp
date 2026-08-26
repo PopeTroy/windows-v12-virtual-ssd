@@ -140,8 +140,8 @@ public:
         // 5. Calculate Total Output
         int32_t output = ADD_Q16(p_term, ADD_Q16(i_term, d_term));
 
-        // 6. Output Saturation Guard
-        output = std::clamp(output, out_min, out_max);
+        // 6. Output Saturation Guard (Compatible with MSVC default C++14/17 modes)
+        output = std::max(out_min, std::min(output, out_max));
 
         // Store past states for next iteration
         prev_error = error;
