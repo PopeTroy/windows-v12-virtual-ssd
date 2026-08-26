@@ -1,9 +1,9 @@
 using System;
 using System.Buffers;
 using System.Runtime.CompilerServices;
+using System.Runtime.InteropServices;
 using System.Runtime.Intrinsics;
 using System.Runtime.Intrinsics.X86;
-using System.Runtime.InteropServices;
 
 namespace SovereignEngine.Native
 {
@@ -16,14 +16,13 @@ namespace SovereignEngine.Native
     {
         private const string LibraryName = "sovereign_compressor";
 
-        private const int SOVEREIGN_SUCCESS = 0;
-        private const int SOVEREIGN_ERR_NULL_POINTER = -1;
-        private const int SOVEREIGN_ERR_BUFFER_TOO_SMALL = -2;
-        private const int SOVEREIGN_ERR_COMPRESSION_FAILED = -3;
-        private const int SOVEREIGN_ERR_DECOMPRESSION_FAILED = -4;
+        public const int SOVEREIGN_SUCCESS = 0;
+        public const int SOVEREIGN_ERR_NULL_POINTER = -1;
+        public const int SOVEREIGN_ERR_BUFFER_TOO_SMALL = -2;
+        public const int SOVEREIGN_ERR_COMPRESSION_FAILED = -3;
+        public const int SOVEREIGN_ERR_DECOMPRESSION_FAILED = -4;
 
         // --- FIELD GOVERNOR & MATRIX RATIOS ---
-        // 84 Governor Base; Light-Matrix Scaling Factor: 2/7 (~0.285714)
         private const int FIELD_GOVERNOR_BASE = 84;
         private const double LIGHT_MATRIX_RATIO = 2.0 / 7.0; 
         private const int LAMBDA_BRIDGE_THRESHOLD = 144_000; // 144 KB Spatial Trigger Boundary
@@ -81,37 +80,38 @@ namespace SovereignEngine.Native
         {
             if (buffer.IsEmpty) return 0.0;
 
-            // Sample 12-cylinder dynamic strides across memory chunk
             int len = buffer.Length;
             int sampleSize = Math.Min(len, 4096);
             int step = Math.Max(1, len / sampleSize);
 
             fixed (byte* pBuf = buffer)
             {
-                // Frequency spectrum accumulator bins (16 quadric spectrum buckets)
                 Span<uint> fourierBins = stackalloc uint[16];
                 fourierBins.Clear();
 
+                int sampleCount = 0;
                 for (int idx = 0; idx < len; idx += step)
                 {
                     byte b = pBuf[idx];
-                    fourierBins[b & 0x0F]++; // Frequency harmonic projection
+                    fourierBins[b & 0x0F]++;
+                    sampleCount++;
                 }
 
-                // Calculate spectral dispersion gradient (Entropy approximation)
+                if (sampleCount == 0) return 0.0;
+
                 double entropy = 0.0;
-                double invTotal = 1.0 / (len / (double)step);
+                double invTotal = 1.0 / sampleCount;
 
                 for (int b = 0; b < 16; b++)
                 {
                     if (fourierBins[b] > 0)
                     {
                         double p = fourierBins[b] * invTotal;
-                        entropy -= p * Math.Log2(p); // Fourier Shannon boundary
+                        entropy -= p * Math.Log2(p);
                     }
                 }
 
-                return entropy / 4.0; // Normalized [0.0, 1.0] spectrum density
+                return entropy / 4.0;
             }
         }
 
@@ -127,27 +127,21 @@ namespace SovereignEngine.Native
             out bool triggerDimensionalOverwrite, 
             out int optimizedCompressionLevel)
         {
-            // P = Compression Level, η = Efficiency Scale adjusted by Fourier Entropy
             double p = Math.Max(1, requestedLevel);
             double eta = (1.0 + (p * 0.15)) * (1.1 - spectralEntropy); 
-            double r = Avx2.IsSupported ? 0.25 : 1.0; // Resistance approaching zero via SIMD
+            double r = Avx2.IsSupported ? 0.25 : 1.0; 
             double c = inputLength / (double)LAMBDA_BRIDGE_THRESHOLD;
 
-            // UGPE integral equation
             double ugpe = (inputLength * p * eta) / (r * Math.Max(c, 0.001));
 
-            // Check Overwrite threshold (144,000 Bridge)
             triggerDimensionalOverwrite = inputLength >= LAMBDA_BRIDGE_THRESHOLD || ugpe >= 144000.0;
 
-            // Geodesic zero-inertia path adjustment
             if (spectralEntropy > 0.95)
             {
-                // Uncompressible stream (High entropy) -> Level 1 (Fast direct store/copy)
                 optimizedCompressionLevel = 1;
             }
             else if (triggerDimensionalOverwrite)
             {
-                // Overwrite active: cap to Level 5 to prevent pipeline stall and preserve zero-inertia
                 optimizedCompressionLevel = Math.Min(requestedLevel, 5);
             }
             else
@@ -178,36 +172,38 @@ namespace SovereignEngine.Native
         {
             if (input.IsEmpty) return Array.Empty<byte>();
 
-            // Step 1: Fourier Spectral Entropy Evaluation
             double spectralEntropy = CalculateFourierSpectralEntropy(input);
+            CalculateUGPEAndGeodesic(input.Length, compressionLevel, spectralEntropy, out _, out int effectiveLevel);
 
-            // Step 2: Compute Geodesic Trajectory & Optimal Compression Level
-            CalculateUGPEAndGeodesic(input.Length, compressionLevel, spectralEntropy, out bool triggerOverwrite, out int effectiveLevel);
-
-            // Step 3: Dynamic capacity allocation with 32-byte SIMD Quadric alignment cushion
             int capacity = input.Length + (input.Length >> 6) + 1024;
             byte[] rented = ArrayPool<byte>.Shared.Rent(capacity);
 
             try
             {
                 fixed (byte* pIn = input)
-                fixed (byte* pOut = rented)
                 {
                     UIntPtr written = UIntPtr.Zero;
+                    int res;
 
-                    int res = NativeCompressChunk(pIn, (UIntPtr)input.Length, pOut, (UIntPtr)rented.Length, &written, effectiveLevel);
+                    fixed (byte* pOut = rented)
+                    {
+                        res = NativeCompressChunk(pIn, (UIntPtr)input.Length, pOut, (UIntPtr)rented.Length, &written, effectiveLevel);
+                    }
 
                     if (res == SOVEREIGN_ERR_BUFFER_TOO_SMALL)
                     {
                         ArrayPool<byte>.Shared.Return(rented);
-                        rented = ArrayPool<byte>.Shared.Rent(capacity * 2);
+                        capacity *= 2;
+                        rented = ArrayPool<byte>.Shared.Rent(capacity);
+
                         fixed (byte* pRetry = rented)
                         {
                             res = NativeCompressChunk(pIn, (UIntPtr)input.Length, pRetry, (UIntPtr)rented.Length, &written, effectiveLevel);
                         }
                     }
 
-                    if (res != SOVEREIGN_SUCCESS) throw new ExternalException($"Compression error code: {res}");
+                    if (res != SOVEREIGN_SUCCESS) 
+                        throw new ExternalException($"Compression failed with native error code: {res}");
 
                     byte[] output = new byte[(int)written];
                     Buffer.BlockCopy(rented, 0, output, 0, (int)written);
@@ -230,16 +226,20 @@ namespace SovereignEngine.Native
             try
             {
                 fixed (byte* pIn = compressedInput)
-                fixed (byte* pOut = rented)
                 {
                     UIntPtr written = UIntPtr.Zero;
-                    int res = NativeDecompressChunk(pIn, (UIntPtr)compressedInput.Length, pOut, (UIntPtr)rented.Length, &written);
+                    int res;
+
+                    fixed (byte* pOut = rented)
+                    {
+                        res = NativeDecompressChunk(pIn, (UIntPtr)compressedInput.Length, pOut, (UIntPtr)rented.Length, &written);
+                    }
 
                     while (res == SOVEREIGN_ERR_BUFFER_TOO_SMALL)
                     {
-                        int newCap = rented.Length * 2;
                         ArrayPool<byte>.Shared.Return(rented);
-                        rented = ArrayPool<byte>.Shared.Rent(newCap);
+                        capacity *= 2;
+                        rented = ArrayPool<byte>.Shared.Rent(capacity);
 
                         fixed (byte* pRetry = rented)
                         {
@@ -247,7 +247,8 @@ namespace SovereignEngine.Native
                         }
                     }
 
-                    if (res != SOVEREIGN_SUCCESS) throw new ExternalException($"Decompression error code: {res}");
+                    if (res != SOVEREIGN_SUCCESS) 
+                        throw new ExternalException($"Decompression failed with native error code: {res}");
 
                     byte[] output = new byte[(int)written];
                     Buffer.BlockCopy(rented, 0, output, 0, (int)written);
@@ -278,7 +279,6 @@ namespace SovereignEngine.Native
                 int len = buffer.Length;
                 int i = 0;
 
-                // AVX2 256-bit vectorized XOR pass
                 if (Avx2.IsSupported && len >= 32)
                 {
                     ulong keyPattern = 0x0201CEFAEFBEADDE; 
@@ -293,7 +293,6 @@ namespace SovereignEngine.Native
                     }
                 }
 
-                // 64-bit fallback for remaining full blocks
                 int remaining = len - i;
                 int ulongBlocks = remaining / 8;
                 ulong* pULong = (ulong*)(pBuffer + i);
@@ -307,7 +306,6 @@ namespace SovereignEngine.Native
                     }
                 }
 
-                // Scalar tail execution
                 int tailStart = i + (ulongBlocks * 8);
                 for (int k = tailStart; k < len; k++)
                 {
@@ -389,6 +387,8 @@ namespace SovereignEngine.Native
 
             public unsafe TailedBeastChakraPool(long size)
             {
+                if (size <= 0) throw new ArgumentOutOfRangeException(nameof(size), "Pool size must be greater than zero.");
+
                 SizeInBytes = size;
                 NativePointer = (IntPtr)NativeMemory.Alloc((nuint)size);
                 NativeMemory.Clear((void*)NativePointer, (nuint)size);
@@ -396,7 +396,9 @@ namespace SovereignEngine.Native
 
             public unsafe Span<byte> AsSpan()
             {
-                if (_disposed) throw new ObjectDisposedException(nameof(TailedBeastChakraPool));
+                if (_disposed || NativePointer == IntPtr.Zero) 
+                    throw new ObjectDisposedException(nameof(TailedBeastChakraPool));
+
                 return new Span<byte>((void*)NativePointer, (int)SizeInBytes);
             }
 
@@ -411,6 +413,12 @@ namespace SovereignEngine.Native
                     }
                     _disposed = true;
                 }
+                GC.SuppressFinalize(this);
+            }
+
+            ~TailedBeastChakraPool()
+            {
+                Dispose();
             }
         }
 
