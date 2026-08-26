@@ -3,9 +3,7 @@
 JUBI TEN-TAILS DDPG INGESTION ENGINE
 ============================================================================
 Integrates 10-tailpiece state momentum vectors into the PyTorch DDPG ingestion
-pipeline. Tailpieces 1 to 10 accumulate historical error rates to apply 
-exponentially weighted momentum adjustments directly to the DDPG reward 
-function and output control gains.
+pipeline with state energy signature analysis and quantum-inspired gain modulation.
 ============================================================================
 """
 
@@ -37,6 +35,19 @@ class TenTailsMomentumEngine:
         self.tail_vectors[0] = current_error
         jubi_energy = np.dot(self.tail_vectors, self.tail_weights)
         return float(jubi_energy)
+
+    def analyze_state_energy_relationship(self, error: float, jubi_energy: float) -> float:
+        """
+        Analogous to Brus Equation analysis.
+        Analyzes how the current system state (error) and its momentum signature (jubi_energy)
+        contribute to the overall "system energy" which dictates reward and control gain adjustments.
+        Relates control error and accumulated momentum to a "control bandgap" penalty/bonus.
+        """
+        control_energy_signature = (
+            1.0 * abs(error) +           # Primary energy contribution from current error
+            0.5 * abs(jubi_energy)       # Secondary contribution from momentum state
+        )
+        return float(control_energy_signature)
 
 class DDPGReplayBuffer:
     def __init__(self, state_dim=2, action_dim=3, max_size=100000):
@@ -90,11 +101,19 @@ class SharedMemoryTelemetryConsumer:
             error = err_q16 / 65536.0
             current_state = np.array([process_var, error], dtype=np.float32)
 
+            # Energy analysis sequence
             jubi_energy = self.jubi_engine.accumulate_tail_energy(error)
+            control_energy_signature = self.jubi_engine.analyze_state_energy_relationship(error, jubi_energy)
 
             if self.last_state is not None:
-                reward = -abs(error) - (0.05 * abs(jubi_energy))
-                base_kp = 1.5 + (0.01 * np.sign(jubi_energy))
+                # Reward shaping using energy signature and jubi_energy
+                reward = -abs(error) - (0.05 * abs(jubi_energy)) - (0.02 * control_energy_signature)
+
+                # Control gain modulation based on energy state
+                base_kp_adjustment = (0.01 * np.sign(jubi_energy)) + (0.005 * np.sign(control_energy_signature))
+                base_kp = 1.5 + base_kp_adjustment
+
+                # Action space projection
                 action = np.array([base_kp, 0.1, 0.05], dtype=np.float32) 
                 
                 self.replay_buffer.add(self.last_state, action, reward, current_state)
@@ -121,7 +140,6 @@ if __name__ == "__main__":
     consumer = SharedMemoryTelemetryConsumer()
     print("[JUBI 10-TAILS ENGINE] Listening to C++ Ring Buffer and feeding PyTorch DDPG Buffer...")
 
-    # Single-pass execution block for GitHub Actions workflow testing
     count = consumer.read_ring_buffer()
     print(f"[JUBI DDPG] Ingested {count} samples | Total Replay Buffer Size: {consumer.replay_buffer.size}")
     consumer.update_heartbeat_and_gains(1.8, 0.12, 0.06)
