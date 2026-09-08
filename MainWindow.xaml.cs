@@ -5,6 +5,8 @@ using System.Text;
 using System.Threading.Tasks;
 using System.Windows;
 using SovereignEngine.Native;
+using IniParser;
+using IniParser.Model;
 
 namespace SovereignSSD
 {
@@ -12,9 +14,11 @@ namespace SovereignSSD
     {
         private const string PUTER_FS_ENDPOINT = "https://celsiusmediagroup.co.za/puterfs";
         private const long TOTAL_CLOUD_CAPACITY_BYTES = 100L * 1024L * 1024L * 1024L; // 100 GB Virtual Limit
-        
+        private const string CONFIG_FILE_NAME = "vssdhx_dlss5_config.ini";
+
         private static readonly HttpClient HttpClient = new HttpClient { Timeout = TimeSpan.FromHours(2) };
         private readonly string _baseSSDPath;
+        private readonly string _configPath;
         private long _cloudUsedBytes = 0;
         private long _totalBytesSavedLocally = 0;
 
@@ -28,7 +32,10 @@ namespace SovereignSSD
                 Directory.CreateDirectory(_baseSSDPath);
             }
 
+            _configPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, CONFIG_FILE_NAME);
+
             VerifyNativeBinding();
+            LoadIniConfiguration();
             UpdateMetricsDisplay();
             StartFileSystemWatcher();
         }
@@ -50,6 +57,57 @@ namespace SovereignSSD
             {
                 TxtStatus.Text = $"Native Binding Error: {ex.Message}";
             }
+        }
+
+        private void LoadIniConfiguration()
+        {
+            try
+            {
+                if (File.Exists(_configPath))
+                {
+                    var parser = new FileIniDataParser();
+                    IniData data = parser.ReadFile(_configPath);
+
+                    string enabled = data["DLSS5"]["Enabled"] ?? "true";
+                    string scale = data["DLSS5"]["ResolutionScale"] ?? "2.0";
+                    string shaders = data["ReShade"]["ActiveShaders"] ?? "CAS.fx, SMAA.fx, NeuralSharpen.fx";
+
+                    ChkDlssEnable.IsChecked = enabled.Equals("true", StringComparison.OrdinalIgnoreCase);
+                    TxtDlssStatus.Text = $"Scale Multiplier: {scale}x | Shaders: {shaders}";
+                }
+                else
+                {
+                    TxtDlssStatus.Text = "Config file vssdhx_dlss5_config.ini not found. Using runtime defaults.";
+                }
+            }
+            catch (Exception ex)
+            {
+                TxtDlssStatus.Text = $"INI Config Read Warning: {ex.Message}";
+            }
+        }
+
+        private void ChkDlssEnable_Changed(object sender, RoutedEventArgs e)
+        {
+            try
+            {
+                if (File.Exists(_configPath))
+                {
+                    var parser = new FileIniDataParser();
+                    IniData data = parser.ReadFile(_configPath);
+                    data["DLSS5"]["Enabled"] = (ChkDlssEnable.IsChecked == true).ToString().ToLower();
+                    parser.WriteFile(_configPath, data);
+                }
+            }
+            catch (Exception ex)
+            {
+                TxtStatus.Text = $"Failed to update INI state: {ex.Message}";
+            }
+        }
+
+        private void BtnReloadConfig_Click(object sender, RoutedEventArgs e)
+        {
+            LoadIniConfiguration();
+            TxtStatus.Text = "Configuration reloaded from vssdhx_dlss5_config.ini.";
         }
 
         private void UpdateMetricsDisplay()
