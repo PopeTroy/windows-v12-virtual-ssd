@@ -52,6 +52,20 @@ app.get('/', (req, res) => {
             <span id="fs-status">Puter FS: Initializing...</span>
         </div>
 
+        <!-- Puter Authentication Matrix -->
+        <div class="card">
+            <h3>Puter.auth Authentication Controls</h3>
+            <div class="btn-group">
+                <button onclick="handleSignIn()">signIn()</button>
+                <button onclick="handleGetUser()" class="btn-blue">getUser()</button>
+                <button onclick="handleIsSignedIn()" class="btn-blue">isSignedIn()</button>
+                <button onclick="handleSignOut()" class="btn-danger">signOut()</button>
+            </div>
+            <div style="margin-top: 0.75rem; font-size: 0.9rem; color: #94a3b8;">
+                User Status: <span id="auth-user-status" style="color: #38bdf8;">Checking...</span>
+            </div>
+        </div>
+
         <div class="card">
             <h3>Puter.fs Directory & File Controls</h3>
             <div class="btn-group">
@@ -90,6 +104,20 @@ app.get('/', (req, res) => {
             el.scrollTop = el.scrollHeight;
         }
 
+        async function updateAuthStatus() {
+            try {
+                const signedIn = puter.auth.isSignedIn();
+                if (signedIn) {
+                    const user = await puter.auth.getUser();
+                    document.getElementById('auth-user-status').innerText = 'Signed in as ' + (user.username || user.email || 'User');
+                } else {
+                    document.getElementById('auth-user-status').innerText = 'Not signed in';
+                }
+            } catch (err) {
+                document.getElementById('auth-user-status').innerText = 'Auth State Unknown';
+            }
+        }
+
         async function initFS() {
             try {
                 await puter.fs.mkdir(DEFAULT_DIR, { createMissingParents: true });
@@ -97,6 +125,43 @@ app.get('/', (req, res) => {
                 printLog('Mount point active at /' + DEFAULT_DIR);
             } catch (err) {
                 document.getElementById('fs-status').innerText = 'Puter FS: Connected';
+            }
+            await updateAuthStatus();
+        }
+
+        // --- Puter Auth Handlers ---
+        async function handleSignIn() {
+            try {
+                printLog('Prompting Puter signIn popup...');
+                const result = await puter.auth.signIn();
+                printLog('signIn successful: ' + JSON.stringify(result));
+                await updateAuthStatus();
+            } catch (err) {
+                printLog('signIn error: ' + err.message, true);
+            }
+        }
+
+        async function handleGetUser() {
+            try {
+                const user = await puter.auth.getUser();
+                printLog('getUser metadata:\\n' + JSON.stringify(user, null, 2));
+            } catch (err) {
+                printLog('getUser error: ' + err.message, true);
+            }
+        }
+
+        function handleIsSignedIn() {
+            const status = puter.auth.isSignedIn();
+            printLog('isSignedIn status: ' + status);
+        }
+
+        async function handleSignOut() {
+            try {
+                await puter.auth.signOut();
+                printLog('signOut executed successfully.');
+                await updateAuthStatus();
+            } catch (err) {
+                printLog('signOut error: ' + err.message, true);
             }
         }
 
