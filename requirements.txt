@@ -3,3 +3,4 @@ torch
 onnx
 onnxscript
 numpy
+iniconfig
