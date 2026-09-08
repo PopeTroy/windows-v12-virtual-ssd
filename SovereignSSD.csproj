@@ -19,10 +19,17 @@
     <EnableCompressionInSingleFile>true</EnableCompressionInSingleFile>
   </PropertyGroup>
 
-  <!-- Embed native compression DLL and Windows Cloud Filter API DLL -->
+  <!-- Embed native compression DLL, INI configurations, and Windows Cloud Filter API DLL -->
   <ItemGroup>
     <!-- Native C++ Compiled Engine & Tuners -->
     <Content Include="sovereign_compressor.dll" Condition="Exists('sovereign_compressor.dll')">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+      <ExcludeFromSingleFile>false</ExcludeFromSingleFile>
+    </Content>
+
+    <!-- DLSS 5 & ReShade Auto-Generated Configuration -->
+    <Content Include="*.ini" Condition="Exists('vssdhx_dlss5_config.ini')">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
       <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
       <ExcludeFromSingleFile>false</ExcludeFromSingleFile>
@@ -43,6 +50,7 @@
   </ItemGroup>
 
   <ItemGroup>
+    <PackageReference Include="ini-parser-netstandard" Version="2.5.2" />
     <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.8.0" />
     <PackageReference Include="xunit" Version="2.6.2" />
     <PackageReference Include="xunit.runner.visualstudio" Version="2.5.4">
