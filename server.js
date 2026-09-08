@@ -206,6 +206,39 @@ app.get('/', (req, res) => {
     `);
 });
 
+// --- SPECTROSCOPY & ENGINE API INTEGRATION ENDPOINTS ---
+
+app.post('/api/v1/auth/token', (req, res) => {
+    const { client_id, client_secret } = req.body || {};
+    if (client_id === 'sovereign_v12_instance' && client_secret === 'sovereign_secret_key') {
+        return res.json({
+            access_token: `sov_bearer_${Buffer.from(Date.now().toString()).toString('base64')}`,
+            token_type: 'Bearer',
+            expires_in: 3600
+        });
+    }
+    return res.status(401).json({ error: 'Invalid IAM client credentials' });
+});
+
+app.get('/api/v1/config/spectroscopy', (req, res) => {
+    res.json({
+        useBrusEquationScaling: true,
+        deepImagePriorReconstruction: true,
+        bulkBandgapEV: 2.42,
+        quantumDotRadiusNM: 2.5,
+        onnxInferenceEngine: 'TensorRT'
+    });
+});
+
+app.get('/api/v1/stream/video-instance', (req, res) => {
+    res.json({
+        stream_status: 'ACTIVE',
+        pipeline: 'VSSDHX_V12_ZERO_WEIGHT_STREAM',
+        spectroscopy_dip_uncapped: true,
+        recommended_pagefile_mb: { min: 8192, max: 32768 }
+    });
+});
+
 app.listen(PORT, () => {
     console.log(`[UESP V12 SSD] Server running on port ${PORT}`);
 });
