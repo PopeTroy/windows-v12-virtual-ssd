@@ -5,8 +5,8 @@ JUBI TEN-TAILS DDPG INGESTION ENGINE (VSSDHX V12 + DLSS 5 ENHANCER)
 Integrates 10-tailpiece state momentum vectors into the PyTorch DDPG ingestion
 pipeline with state energy signature analysis, quantum-inspired gain modulation,
 VSSDHX V12 DLAA/DLSS spatial-temporal reconstruction, Virtual SSD isolation,
-ONNX Nvidia teacher-guided 402 Quota custom sign-in triggers, and global
-DLSS 5 / ReShade resolution auto-initialization for games.
+ONNX Nvidia teacher-guided 402 Quota custom sign-in triggers, Puter.js Auth
+interoperability, and global DLSS 5 / ReShade resolution auto-initialization.
 ============================================================================
 """
 
@@ -72,15 +72,17 @@ class AdvancedSpectroscopyDIPEngine:
     def __init__(self, radius_nm: float = 2.5, bulk_bandgap_ev: float = 2.42):
         self.radius_nm = radius_nm
         self.bulk_bandgap_ev = bulk_bandgap_ev
-        # Quantum Constants for Brus Equation Shift
-        self.hbar = 1.054571817e-34
-        self.m_e = 9.1093837015e-31 * 0.13  # Effective electron mass
-        self.m_h = 9.1093837015e-31 * 0.45  # Effective hole mass
-        self.elem_charge = 1.602176634e-19
-        self.eps_0 = 8.8541878128e-12
-        self.eps_r = 10.0  # Relative permittivity
+        
+        # Physical & Quantum Constants
+        self.h = 6.62607015e-34              # Planck's constant (J·s)
+        self.m_0 = 9.1093837015e-31          # Rest mass of electron (kg)
+        self.m_e = self.m_0 * 0.13           # Effective electron mass
+        self.m_h = self.m_0 * 0.45           # Effective hole mass
+        self.elem_charge = 1.602176634e-19   # Elementary charge (C)
+        self.eps_0 = 8.8541878128e-12        # Vacuum permittivity (F/m)
+        self.eps_r = 10.0                    # Relative permittivity
 
-        # Precompute Brus Quantum Shift Shift Factor
+        # Precompute Brus Quantum Energy Shift Factor using the correct denominator (8 * r^2)
         self.quantum_shift_ev = self._calculate_brus_equation_shift()
         
         # Deep Image Prior (DIP) Implicit Weights (Zero-weight network parameters)
@@ -88,10 +90,16 @@ class AdvancedSpectroscopyDIPEngine:
         self.dip_latent_state = np.zeros(4, dtype=np.float32)
 
     def _calculate_brus_equation_shift(self) -> float:
-        """Calculates bandgap quantum shift using the Brus Equation."""
+        """Calculates bandgap quantum shift using the exact Brus Equation."""
         r_m = self.radius_nm * 1e-9
-        confinement_term = ((self.hbar ** 2) * (np.pi ** 2)) / (2 * (r_m ** 2)) * ((1.0 / self.m_e) + (1.0 / self.m_h))
-        coulomb_term = (1.786 * (self.elem_charge ** 2)) / (4 * np.pi * self.eps_0 * self.eps_r * r_m)
+        
+        # Confinement Term: (h^2 / (8 * r^2)) * (1/m_e + 1/m_h)
+        confinement_term = ((self.h ** 2) / (8.0 * (r_m ** 2))) * ((1.0 / self.m_e) + (1.0 / self.m_h))
+        
+        # Coulombic Term: (1.786 * e^2) / (4 * pi * eps_0 * eps_r * r)
+        coulomb_term = (1.786 * (self.elem_charge ** 2)) / (4.0 * np.pi * self.eps_0 * self.eps_r * r_m)
+        
+        # Total Shifted Energy in eV
         energy_shift_joules = confinement_term - coulomb_term
         return self.bulk_bandgap_ev + (energy_shift_joules / self.elem_charge)
 
@@ -147,6 +155,25 @@ class NvidiaONNXLearningEngine:
 class QuotaSignInException(Exception):
     """Custom Exception raised when streaming quota limit is reached (402)."""
     pass
+
+
+class PuterWebAuthBridge:
+    """
+    Interfaces with server.js and Puter.js frontend authentication state (puter.auth.signIn).
+    Generates authentication challenge tokens when stream quota limits occur.
+    """
+    def __init__(self, endpoint_url: str = "http://localhost:3000"):
+        self.endpoint_url = endpoint_url
+
+    def generate_auth_challenge(self, reason: str) -> dict:
+        """Constructs authentication payload for Puter.js client authorization."""
+        return {
+            "action": "PUTER_AUTH_SIGNIN_REQUIRED",
+            "reason": reason,
+            "timestamp": int(time.time()),
+            "auth_methods": ["puter.auth.signIn()", "puter.auth.getUser()"],
+            "target_server": self.endpoint_url
+        }
 
 
 class VSSDHX_V12_DLAA_DLSS_Engine:
@@ -258,6 +285,7 @@ class SharedMemoryTelemetryConsumer:
         self.v12_dlss = VSSDHX_V12_DLAA_DLSS_Engine(scale_factor=1.5)
         self.ssd_guard = VirtualSSDBufferGuard()
         self.onnx_engine = NvidiaONNXLearningEngine()
+        self.puter_bridge = PuterWebAuthBridge()
         
         # Initialize DLSS 5 Resolution Enhancer via Virtual SSD
         self.dlss5_enhancer = VSSDHX_DLSS5_ResolutionEnhancer()
@@ -267,9 +295,11 @@ class SharedMemoryTelemetryConsumer:
 
     def trigger_custom_sign_in_prompt(self, reason: str):
         """Pops up custom sign-in interface when buffer quota limits are exceeded (HTTP 402)."""
+        auth_challenge = self.puter_bridge.generate_auth_challenge(reason)
         print("\n" + "=" * 70)
         print(f"[STREAMING QUOTA DETECTED]: {reason}")
-        print("[ACTION REQUIRED]: Launching Custom Authentication & Knowledge UI...")
+        print(f"[PUTER AUTH CHALLENGE]: {json.dumps(auth_challenge)}")
+        print("[ACTION REQUIRED]: Call puter.auth.signIn() on local controller interface...")
         print("=" * 70 + "\n")
         raise QuotaSignInException(reason)
 
@@ -311,7 +341,7 @@ class SharedMemoryTelemetryConsumer:
             # --- QUOTA EXCEEDED (402) DETECT & INTERCEPT PASS ---
             memory_pressure = (head - tail) / RING_CAPACITY
             if memory_pressure > 0.90 or abs(error) > 85.0:
-                self.trigger_custom_sign_in_prompt(reason="Quota Exceeded (HTTP 402) - Authentication Required")
+                self.trigger_custom_sign_in_prompt(reason="Quota Exceeded (HTTP 402) - Puter Auth Required")
 
             # Energy analysis sequence
             jubi_energy = self.jubi_engine.accumulate_tail_energy(error)
@@ -359,4 +389,4 @@ if __name__ == "__main__":
         print(f"[JUBI DDPG V12] Ingested {count} samples | Total Replay Buffer Size: {consumer.replay_buffer.size}")
         consumer.update_heartbeat_and_gains(1.8, 0.12, 0.06)
     except QuotaSignInException as e:
-        print(f"[AUTH INTERCEPT]: Stream processing paused until custom sign-in is completed.")
+        print(f"[AUTH INTERCEPT]: Stream processing paused until Puter custom sign-in is completed.")
