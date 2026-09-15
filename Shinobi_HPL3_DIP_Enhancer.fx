@@ -19,6 +19,12 @@ uniform float FocalDepthCutoff <
     ui_label = "Shinobi Focal Blur Depth Threshold";
 > = 0.85;
 
+// Shadow Clone Culling: Real-time DIP Reconstruction for 512x512 Shadow Maps
+uniform float ShadowCloneDIPEdgeSharpen <
+    ui_type = "slider"; ui_min = 0.0; ui_max = 2.0;
+    ui_label = "Shadow Clone DIP Sharpening (512x512 Proxy)";
+> = 1.2;
+
 // Divine Ocular: Chromatic Aberration & Spatial Warp Matrix
 float3 ApplyOcularWarp(float2 texcoord)
 {
@@ -27,6 +33,14 @@ float3 ApplyOcularWarp(float2 texcoord)
     float g = tex2D(ReShade::BackBuffer, texcoord).g;
     float b = tex2D(ReShade::BackBuffer, texcoord - offset).b;
     return float3(r, g, b);
+}
+
+// Shadow Clone Culling Edge Sharpening Pass
+float3 ApplyShadowCloneEdgeSharpen(float2 texcoord, float3 color)
+{
+    float2 shadowTexel = ReShade::PixelSize * 2.0;
+    float3 blurredShadow = tex2D(ReShade::BackBuffer, texcoord + shadowTexel).rgb;
+    return lerp(color, color + (color - blurredShadow) * ShadowCloneDIPEdgeSharpen, 0.5);
 }
 
 // Particle Style: Atomic Sub-Pixel Disintegration Sharpening (DIP Engine)
@@ -50,6 +64,9 @@ float4 PS_ShinobiOcularDIP(float4 pos : SV_Position, float2 texcoord : TEXCOORD)
 {
     float depth = ReShade::GetLinearDepth(texcoord);
     float3 color = ApplyOcularWarp(texcoord);
+
+    // Apply Shadow Clone Edge Reconstruction for Pruned Shadow Maps
+    color = ApplyShadowCloneEdgeSharpen(texcoord, color);
 
     // Shinobi Focal Mask: Background Depth-of-Field Bypass
     if (depth > FocalDepthCutoff)
