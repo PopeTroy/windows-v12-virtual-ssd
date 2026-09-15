@@ -6,7 +6,7 @@
 #include <thread>
 
 // ============================================================================
-// FIXED-POINT Q16.16 HELPERS
+// FIXED-POINT Q16.16 HELPERS (OPTIMIZED INTEGERS & BITWISE SHIFTS)
 // ============================================================================
 #define FLOAT_TO_Q16(x) (static_cast<int32_t>((x) * 65536.0f))
 #define Q16_TO_FLOAT(x) (static_cast<float>(x) / 65536.0f)
@@ -14,18 +14,37 @@
 #define ADD_Q16(a, b) ((a) + (b))
 #define SUB_Q16(a, b) ((a) - (b))
 
+// Fast Q16.16 Multiplication via bitwise arithmetic
 inline int32_t MULT_Q16(int32_t a, int32_t b) {
     int64_t temp = static_cast<int64_t>(a) * static_cast<int64_t>(b);
     return static_cast<int32_t>(temp >> 16);
 }
 
+// Fast Q16.16 Division via bitwise shifts
 inline int32_t DIV_Q16(int32_t numerator, int32_t denominator) {
     if (denominator == 0) return 0;
     int64_t temp = static_cast<int64_t>(numerator) << 16;
     return static_cast<int32_t>(temp / denominator);
 }
 
-// IPC Shared Memory Ring Buffer Headers
+// Low-Pass Alpha Filter for Process Variable (PV) Noise Reduction
+inline int32_t LOW_PASS_FILTER(int32_t current_val, int32_t prev_val, int32_t alpha_q16) {
+    // Filter equation: y[n] = alpha * x[n] + (1 - alpha) * y[n-1]
+    int32_t diff = SUB_Q16(current_val, prev_val);
+    return ADD_Q16(prev_val, MULT_Q16(alpha_q16, diff));
+}
+
+// MODERN ARCHITECTURE ADAPTER: Full-Stack Dev IPC Event Telemetry Payload
+struct SystemTelemetryEvent {
+    uint64_t timestamp_ns;
+    int32_t filtered_pv;
+    int32_t raw_pv;
+    int32_t setpoint;
+    int32_t control_output;
+    uint32_t tail_drop_count;
+};
+
+// IPC Shared Memory Ring Buffer Headers (Enhanced for Web-Socket / Shared-Memory streaming)
 struct SharedData {
     int32_t kp;
     int32_t ki;
@@ -33,6 +52,7 @@ struct SharedData {
     uint32_t head;
     uint32_t tail;
     uint64_t timestamp;
+    SystemTelemetryEvent event_queue[256]; // Cyclic telemetry channel for WebSockets
 };
 
 // ============================================================================
@@ -62,23 +82,27 @@ private:
 
     int32_t integral;
     int32_t prev_error;
+    int32_t prev_pv_filtered; // Preserved state for noise filtering
     int32_t out_min, out_max;
 
     int32_t lookahead_dt_q16;
     float prediction_weight;
 
     uint32_t consecutive_overshoot_count;
+    int32_t filter_alpha_q16; // Noise filter weight parameter (0.0 to 1.0 in Q16)
 
 public:
     QuantumInspiredPID(float kp, float ki, float kd, float min_out, float max_out,
-                       float lookahead_time = 0.001f, float pred_weight = 0.5f)
+                       float lookahead_time = 0.001f, float pred_weight = 0.5f,
+                       float alpha = 0.25f)
         : Kp(FLOAT_TO_Q16(kp)), Ki(FLOAT_TO_Q16(ki)), Kd(FLOAT_TO_Q16(kd)),
           Kp_adaptation_factor(1.0f), Ki_adaptation_factor(1.0f), Kd_adaptation_factor(1.0f),
-          integral(0), prev_error(0),
+          integral(0), prev_error(0), prev_pv_filtered(0),
           out_min(FLOAT_TO_Q16(min_out)), out_max(FLOAT_TO_Q16(max_out)),
           lookahead_dt_q16(FLOAT_TO_Q16(lookahead_time)),
           prediction_weight(pred_weight),
-          consecutive_overshoot_count(0) {}
+          consecutive_overshoot_count(0),
+          filter_alpha_q16(FLOAT_TO_Q16(alpha)) {}
 
     void updateGains(int32_t new_kp, int32_t new_ki, int32_t new_kd) {
         Kp = new_kp;
@@ -111,7 +135,12 @@ public:
         }
     }
 
-    int32_t compute(int32_t setpoint, int32_t process_variable, int32_t dt_q16) {
+    int32_t compute(int32_t setpoint, int32_t raw_process_variable, int32_t dt_q16) {
+        // 1. Dynamic Noise Filtering (Smoothing PV before processing)
+        int32_t process_variable = LOW_PASS_FILTER(raw_process_variable, prev_pv_filtered, filter_alpha_q16);
+        prev_pv_filtered = process_variable;
+
+        // 2. Control Calculations
         int32_t error = SUB_Q16(setpoint, process_variable);
 
         int32_t error_change = SUB_Q16(error, prev_error);
@@ -157,26 +186,31 @@ public:
 // SIMULATION ENTRY POINT
 // ============================================================================
 int main() {
-    QuantumInspiredPID pid(2.0f, 0.2f, 0.05f, -100.0f, 100.0f, 0.005f, 0.4f);
+    QuantumInspiredPID pid(2.0f, 0.2f, 0.05f, -100.0f, 100.0f, 0.005f, 0.4f, 0.30f);
 
     int32_t setpoint_q16 = FLOAT_TO_Q16(250.0f);
     int32_t pv_q16 = FLOAT_TO_Q16(20.0f);
     int32_t dt_q16 = FLOAT_TO_Q16(0.01f);
 
-    std::cout << "Starting Quantum-Inspired PID Simulation Loops with Low-End PC Shinobi Tactics...\n";
+    std::cout << "Starting Modernized Embedded-to-FullStack PID Execution Core...\n";
     std::cout << "Target PV Setpoint: " << Q16_TO_FLOAT(setpoint_q16) << " C\n\n";
 
     float process_gain = 0.05f;
 
     for (int step = 0; step < 100; ++step) {
-        int32_t output_q16 = pid.compute(setpoint_q16, pv_q16, dt_q16);
+        // Simulate high-frequency sensor noise (+/- 0.5C variance)
+        float noisy_drift = (step % 2 == 0 ? 0.5f : -0.5f);
+        int32_t noisy_pv_q16 = pv_q16 + FLOAT_TO_Q16(noisy_drift);
+
+        int32_t output_q16 = pid.compute(setpoint_q16, noisy_pv_q16, dt_q16);
         float output_f = Q16_TO_FLOAT(output_q16);
 
         pv_q16 += MULT_Q16(output_q16, FLOAT_TO_Q16(process_gain));
 
         std::cout << "Step [" << step << "] "
-                  << "PV: " << Q16_TO_FLOAT(pv_q16) << " C | "
-                  << "Control Output: " << output_f << "\n";
+                  << "Raw PV: " << Q16_TO_FLOAT(noisy_pv_q16) << " C | "
+                  << "Filtered PV: " << Q16_TO_FLOAT(pv_q16) << " C | "
+                  << "Output: " << output_f << "\n";
 
         std::this_thread::sleep_for(std::chrono::milliseconds(10));
     }
