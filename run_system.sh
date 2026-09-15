@@ -28,6 +28,10 @@ ActiveShaders = CAS.fx, SMAA.fx, NeuralSharpen.fx, RenoDX_HDR.fx
 EOF
 fi
 
+# Add environment variable exports for ReShade & DIP Shader bindings
+export RESHADE_SHADER_PATH="$(pwd)/Shinobi_HPL3_DIP_Enhancer.fx"
+export VSSDHX_CONFIG_PATH="$(pwd)/vssdhx_dlss5_config.ini"
+
 # 3. Compile C++ Core Engine
 mkdir -p $BUILD_DIR
 cd $BUILD_DIR
