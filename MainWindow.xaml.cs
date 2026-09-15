@@ -15,10 +15,12 @@ namespace SovereignSSD
         private const string PUTER_FS_ENDPOINT = "https://celsiusmediagroup.co.za/puterfs";
         private const long TOTAL_CLOUD_CAPACITY_BYTES = 100L * 1024L * 1024L * 1024L; // 100 GB Virtual Limit
         private const string CONFIG_FILE_NAME = "vssdhx_dlss5_config.ini";
+        private const string SHINOBI_SHADER_FILE_NAME = "Shinobi_HPL3_DIP_Enhancer.fx";
 
         private static readonly HttpClient HttpClient = new HttpClient { Timeout = TimeSpan.FromHours(2) };
         private readonly string _baseSSDPath;
         private readonly string _configPath;
+        private readonly string _shaderPath;
         private long _cloudUsedBytes = 0;
         private long _totalBytesSavedLocally = 0;
 
@@ -33,11 +35,38 @@ namespace SovereignSSD
             }
 
             _configPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, CONFIG_FILE_NAME);
+            _shaderPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, SHINOBI_SHADER_FILE_NAME);
 
             VerifyNativeBinding();
+            DeployAssetsToGameInjectionDirectory();
             LoadIniConfiguration();
             UpdateMetricsDisplay();
             StartFileSystemWatcher();
+        }
+
+        private void DeployAssetsToGameInjectionDirectory()
+        {
+            try
+            {
+                // Ensures assets marked with 'CopyToOutputDirectory = Always' are synchronized into the game injection path
+                string targetInjectionDir = _baseSSDPath;
+
+                if (File.Exists(_configPath))
+                {
+                    string targetConfigPath = Path.Combine(targetInjectionDir, CONFIG_FILE_NAME);
+                    File.Copy(_configPath, targetConfigPath, overwrite: true);
+                }
+
+                if (File.Exists(_shaderPath))
+                {
+                    string targetShaderPath = Path.Combine(targetInjectionDir, SHINOBI_SHADER_FILE_NAME);
+                    File.Copy(_shaderPath, targetShaderPath, overwrite: true);
+                }
+            }
+            catch (Exception ex)
+            {
+                TxtStatus.Text = $"Asset Injection Deployment Warning: {ex.Message}";
+            }
         }
 
         private void VerifyNativeBinding()
@@ -70,7 +99,7 @@ namespace SovereignSSD
 
                     string enabled = data["DLSS5"]["Enabled"] ?? "true";
                     string scale = data["DLSS5"]["ResolutionScale"] ?? "2.0";
-                    string shaders = data["ReShade"]["ActiveShaders"] ?? "CAS.fx, SMAA.fx, NeuralSharpen.fx";
+                    string shaders = data["ReShade"]["ActiveShaders"] ?? "CAS.fx, SMAA.fx, NeuralSharpen.fx, Shinobi_HPL3_DIP_Enhancer.fx";
 
                     ChkDlssEnable.IsChecked = enabled.Equals("true", StringComparison.OrdinalIgnoreCase);
                     TxtDlssStatus.Text = $"Scale Multiplier: {scale}x | Shaders: {shaders}";
@@ -96,6 +125,7 @@ namespace SovereignSSD
                     IniData data = parser.ReadFile(_configPath);
                     data["DLSS5"]["Enabled"] = (ChkDlssEnable.IsChecked == true).ToString().ToLower();
                     parser.WriteFile(_configPath, data);
+                    DeployAssetsToGameInjectionDirectory();
                 }
             }
             catch (Exception ex)
@@ -107,7 +137,8 @@ namespace SovereignSSD
         private void BtnReloadConfig_Click(object sender, RoutedEventArgs e)
         {
             LoadIniConfiguration();
-            TxtStatus.Text = "Configuration reloaded from vssdhx_dlss5_config.ini.";
+            DeployAssetsToGameInjectionDirectory();
+            TxtStatus.Text = "Configuration reloaded and assets deployed to game injection directory.";
         }
 
         private void UpdateMetricsDisplay()
@@ -193,7 +224,10 @@ namespace SovereignSSD
         private async Task ProcessAndStreamFileAsync(string localFile, string mountPath)
         {
             string fileName = Path.GetFileName(localFile);
-            if (fileName.Equals("desktop.ini", StringComparison.OrdinalIgnoreCase) || fileName.EndsWith(".sov_tmp"))
+            if (fileName.Equals("desktop.ini", StringComparison.OrdinalIgnoreCase) || 
+                fileName.Equals(CONFIG_FILE_NAME, StringComparison.OrdinalIgnoreCase) || 
+                fileName.Equals(SHINOBI_SHADER_FILE_NAME, StringComparison.OrdinalIgnoreCase) || 
+                fileName.EndsWith(".sov_tmp"))
             {
                 return;
             }
