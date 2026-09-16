@@ -114,6 +114,6 @@ jobs:
     - name: Upload Installer Artifact
       uses: actions/upload-artifact@v4
       with:
-        name: SovereignSSD-Setup-v12
-        path: Output/SovereignSSD-Setup-v12.exe
+        name: VSSDHX-Setup-v144
+        path: Output/*.exe
         if-no-files-found: error
