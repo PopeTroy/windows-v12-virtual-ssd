@@ -73,25 +73,36 @@ jobs:
         # Download Logo Image
         Invoke-WebRequest -Uri "https://celsiustechmediagroup.co.za/wp-content/uploads/2026/08/craiyon_113827_image-2.png" -OutFile "vssdhx_logo_temp.png"
 
-        # Convert images to System Bitmaps via System.Drawing (.NET)
         Add-Type -AssemblyName System.Drawing
 
-        # Convert Banner to setup_banner.bmp
-        $bmpBanner = [System.Drawing.Image]::FromFile("setup_banner_temp.png")
+        # Convert Banner to 24-bit BMP
+        $srcBanner = [System.Drawing.Bitmap]::FromFile("setup_banner_temp.png")
+        $bmpBanner = New-Object System.Drawing.Bitmap($srcBanner.Width, $srcBanner.Height, [System.Drawing.Imaging.PixelFormat]::Format24bppRgb)
+        $gBanner = [System.Drawing.Graphics]::FromImage($bmpBanner)
+        $gBanner.DrawImage($srcBanner, 0, 0, $srcBanner.Width, $srcBanner.Height)
         $bmpBanner.Save("setup_banner.bmp", [System.Drawing.Imaging.ImageFormat]::Bmp)
+        $gBanner.Dispose()
         $bmpBanner.Dispose()
+        $srcBanner.Dispose()
 
         # Convert Logo to Small Header BMP
-        $bmpLogo = [System.Drawing.Image]::FromFile("vssdhx_logo_temp.png")
-        $bmpLogo.Save("vssdhx_logo_small.bmp", [System.Drawing.Imaging.ImageFormat]::Bmp)
+        $srcLogo = [System.Drawing.Bitmap]::FromFile("vssdhx_logo_temp.png")
+        $bmpSmall = New-Object System.Drawing.Bitmap(55, 55, [System.Drawing.Imaging.PixelFormat]::Format24bppRgb)
+        $gSmall = [System.Drawing.Graphics]::FromImage($bmpSmall)
+        $gSmall.DrawImage($srcLogo, 0, 0, 55, 55)
+        $bmpSmall.Save("vssdhx_logo_small.bmp", [System.Drawing.Imaging.ImageFormat]::Bmp)
+        $gSmall.Dispose()
+        $bmpSmall.Dispose()
 
-        # Convert Logo to Icon File (.ico)
-        $iconStream = New-Object System.IO.MemoryStream
-        $bmpLogo.Save($iconStream, [System.Drawing.Imaging.ImageFormat]::Png)
-        $bmpLogo.Dispose()
-
-        # Create basic .ICO container from bitmap
-        [System.Drawing.Bitmap]::FromFile("vssdhx_logo_temp.png").Save("vssdhx_logo.ico", [System.Drawing.Imaging.ImageFormat]::Icon)
+        # Generate Valid Windows .ICO Header and Binary Structure
+        $icoBitmap = New-Object System.Drawing.Bitmap($srcLogo, 32, 32)
+        $hIcon = $icoBitmap.GetHicon()
+        $icon = [System.Drawing.Icon]::FromHandle($hIcon)
+        $fs = [System.IO.File]::Create("vssdhx_logo.ico")
+        $icon.Save($fs)
+        $fs.Close()
+        $icoBitmap.Dispose()
+        $srcLogo.Dispose()
 
     - name: Build Installer with Inno Setup
       run: >
