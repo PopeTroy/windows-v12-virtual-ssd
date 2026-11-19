@@ -24,7 +24,7 @@ namespace SovereignSSD
             DefaultVersionPolicy = HttpVersionPolicy.RequestVersionOrHigher
         };
 
-        private static readonly Lock ConsoleLock = new Lock();
+        private static readonly object ConsoleLock = new();
         private static readonly SemaphoreSlim IngestLimiter = new SemaphoreSlim(MAX_CONCURRENT_INGEST, MAX_CONCURRENT_INGEST);
         private static readonly Channel<string> PendingEntriesChannel = Channel.CreateUnbounded<string>(
             new UnboundedChannelOptions { SingleReader = true, SingleWriter = false });
