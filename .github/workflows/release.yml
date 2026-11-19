@@ -14,20 +14,13 @@ jobs:
     - name: Checkout Code
       uses: actions/checkout@v4
 
-    - name: Setup .NET
-      uses: actions/setup-dotnet@v4
-      with:
-        dotnet-version: '8.0.x'
-
-    - name: Restore Dependencies
-      run: dotnet restore SovereignSSD.csproj
-
     - name: Setup MSVC Developer Command Prompt
       uses: ilammy/msvc-dev-cmd@v1
 
     - name: Compile Native C++ Engine & Tuners (MSVC)
+      shell: cmd
       run: |
-        cl.exe /O2 /LD /EHsc PidController.cpp /I. /Fe:sovereign_compressor.dll /link /DLL
+        cl.exe /nologo /O2 /std:c++20 /LD /EHsc /D_CRT_SECURE_NO_WARNINGS PidController.cpp /I. /Fe:sovereign_compressor.dll /link /DLL
 
     - name: Set up Python & Export ONNX / DDPG Models
       uses: actions/setup-python@v4
@@ -42,73 +35,121 @@ jobs:
         python python_ddpg_ingest.py
         python export_onnx.py
 
+    - name: Setup .NET
+      uses: actions/setup-dotnet@v4
+      with:
+        dotnet-version: '8.0.x'
+
+    - name: Restore Dependencies
+      run: dotnet restore SovereignSSD.csproj
+
+    - name: Download and Convert Branding Assets
+      shell: powershell
+      run: |
+        $ErrorActionPreference = "Stop"
+
+        Invoke-WebRequest -Uri "https://celsiustechmediagroup.co.za/wp-content/uploads/2026/08/1787394286450.png" -OutFile "setup_banner_temp.png"
+        Invoke-WebRequest -Uri "https://celsiustechmediagroup.co.za/wp-content/uploads/2026/08/craiyon_113827_image-2.png" -OutFile "vssdhx_logo_temp.png"
+
+        Add-Type -AssemblyName System.Drawing
+        Add-Type @"
+        using System;
+        using System.Runtime.InteropServices;
+        public static class Win32Icon {
+            [DllImport("user32.dll", SetLastError = true)]
+            public static extern bool DestroyIcon(IntPtr hIcon);
+        }
+"@
+
+        # Convert Banner to 24-bit BMP
+        $srcBanner = [System.Drawing.Bitmap]::FromFile("setup_banner_temp.png")
+        try {
+            $bmpBanner = New-Object System.Drawing.Bitmap($srcBanner.Width, $srcBanner.Height, [System.Drawing.Imaging.PixelFormat]::Format24bppRgb)
+            try {
+                $gBanner = [System.Drawing.Graphics]::FromImage($bmpBanner)
+                try {
+                    $gBanner.DrawImage($srcBanner, 0, 0, $srcBanner.Width, $srcBanner.Height)
+                } finally {
+                    $gBanner.Dispose()
+                }
+                $bmpBanner.Save("setup_banner.bmp", [System.Drawing.Imaging.ImageFormat]::Bmp)
+            } finally {
+                $bmpBanner.Dispose()
+            }
+        } finally {
+            $srcBanner.Dispose()
+        }
+
+        # Convert Logo to 55x55 24-bit BMP and 32x32 ICO
+        $srcLogo = [System.Drawing.Bitmap]::FromFile("vssdhx_logo_temp.png")
+        try {
+            $bmpSmall = New-Object System.Drawing.Bitmap(55, 55, [System.Drawing.Imaging.PixelFormat]::Format24bppRgb)
+            try {
+                $gSmall = [System.Drawing.Graphics]::FromImage($bmpSmall)
+                try {
+                    $gSmall.DrawImage($srcLogo, 0, 0, 55, 55)
+                } finally {
+                    $gSmall.Dispose()
+                }
+                $bmpSmall.Save("vssdhx_logo_small.bmp", [System.Drawing.Imaging.ImageFormat]::Bmp)
+            } finally {
+                $bmpSmall.Dispose()
+            }
+
+            $icoBitmap = New-Object System.Drawing.Bitmap($srcLogo, 32, 32)
+            try {
+                $hIcon = $icoBitmap.GetHicon()
+                try {
+                    $icon = [System.Drawing.Icon]::FromHandle($hIcon)
+                    try {
+                        $fs = [System.IO.File]::Create("vssdhx_logo.ico")
+                        try {
+                            $icon.Save($fs)
+                        } finally {
+                            $fs.Dispose()
+                        }
+                    } finally {
+                        $icon.Dispose()
+                    }
+                } finally {
+                    [void][Win32Icon]::DestroyIcon($hIcon)
+                }
+            } finally {
+                $icoBitmap.Dispose()
+            }
+        } finally {
+            $srcLogo.Dispose()
+        }
+
     - name: Publish Space Time SSD Binary
       env:
         NVIDIA_DGX_API_KEY: ${{ secrets.NVIDIA_DGX_API_KEY }}
       run: >
-        dotnet publish SovereignSSD.csproj 
-        -c Release 
-        -r win-x64 
-        --self-contained true 
-        -p:PublishSingleFile=true 
-        -p:IncludeNativeLibrariesForSelfExtract=true 
-        -p:StartupObject=SovereignSSD.Program 
+        dotnet publish SovereignSSD.csproj
+        -c Release
+        -r win-x64
+        --self-contained true
+        -p:PublishSingleFile=true
+        -p:IncludeNativeLibrariesForSelfExtract=false
+        -p:EnableCompressionInSingleFile=false
+        -p:StartupObject=SovereignSSD.Program
         -o "${{ github.workspace }}/publish"
 
     - name: Install Inno Setup
       shell: powershell
       run: |
         choco install innosetup --no-progress -y
-        echo "C:\Program Files (x86)\Inno Setup 6" >> $env:GITHUB_PATH
+        "C:\Program Files (x86)\Inno Setup 6" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
 
     - name: Ensure Output Directory Exists
-      run: mkdir "${{ github.workspace }}/Output"
-
-    - name: Download and Convert Branding Assets
       shell: powershell
-      run: |
-        # Download Banner Image
-        Invoke-WebRequest -Uri "https://celsiustechmediagroup.co.za/wp-content/uploads/2026/08/1787394286450.png" -OutFile "setup_banner_temp.png"
-        
-        # Download Logo Image
-        Invoke-WebRequest -Uri "https://celsiustechmediagroup.co.za/wp-content/uploads/2026/08/craiyon_113827_image-2.png" -OutFile "vssdhx_logo_temp.png"
-
-        Add-Type -AssemblyName System.Drawing
-
-        # Convert Banner to 24-bit BMP
-        $srcBanner = [System.Drawing.Bitmap]::FromFile("setup_banner_temp.png")
-        $bmpBanner = New-Object System.Drawing.Bitmap($srcBanner.Width, $srcBanner.Height, [System.Drawing.Imaging.PixelFormat]::Format24bppRgb)
-        $gBanner = [System.Drawing.Graphics]::FromImage($bmpBanner)
-        $gBanner.DrawImage($srcBanner, 0, 0, $srcBanner.Width, $srcBanner.Height)
-        $bmpBanner.Save("setup_banner.bmp", [System.Drawing.Imaging.ImageFormat]::Bmp)
-        $gBanner.Dispose()
-        $bmpBanner.Dispose()
-        $srcBanner.Dispose()
-
-        # Convert Logo to Small Header BMP
-        $srcLogo = [System.Drawing.Bitmap]::FromFile("vssdhx_logo_temp.png")
-        $bmpSmall = New-Object System.Drawing.Bitmap(55, 55, [System.Drawing.Imaging.PixelFormat]::Format24bppRgb)
-        $gSmall = [System.Drawing.Graphics]::FromImage($bmpSmall)
-        $gSmall.DrawImage($srcLogo, 0, 0, 55, 55)
-        $bmpSmall.Save("vssdhx_logo_small.bmp", [System.Drawing.Imaging.ImageFormat]::Bmp)
-        $gSmall.Dispose()
-        $bmpSmall.Dispose()
-
-        # Generate Valid Windows .ICO Header and Binary Structure
-        $icoBitmap = New-Object System.Drawing.Bitmap($srcLogo, 32, 32)
-        $hIcon = $icoBitmap.GetHicon()
-        $icon = [System.Drawing.Icon]::FromHandle($hIcon)
-        $fs = [System.IO.File]::Create("vssdhx_logo.ico")
-        $icon.Save($fs)
-        $fs.Close()
-        $icoBitmap.Dispose()
-        $srcLogo.Dispose()
+      run: New-Item -ItemType Directory -Path "${{ github.workspace }}/Output" -Force | Out-Null
 
     - name: Build Installer with Inno Setup
       run: >
-        ISCC.exe 
-        /DSourcePath="${{ github.workspace }}/publish/SovereignSSD.exe" 
-        /O"${{ github.workspace }}/Output" 
+        ISCC.exe
+        /DSourcePath="${{ github.workspace }}/publish/SovereignSSD.exe"
+        /O"${{ github.workspace }}/Output"
         "${{ github.workspace }}/installer.iss"
 
     - name: Upload Installer Artifact
