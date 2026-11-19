@@ -27,6 +27,13 @@ namespace SovereignEngine.Native
         bool TriggerDimensionalOverwrite,
         int OptimizedCompressionLevel);
 
+    public readonly record struct GovernanceGuardrailStatus(
+        double TargetP9999LatencyUs,
+        double TargetMaxWaf,
+        long OptimalAllocationUnitBytes,
+        int GovernorThreads,
+        bool Avx2Accelerated);
+
     public static class SovereignCompressor
     {
         private const string LibraryName = "sovereign_compressor";
@@ -40,6 +47,7 @@ namespace SovereignEngine.Native
         private const int FIELD_GOVERNOR_BASE = 84;
         private const double LIGHT_MATRIX_RATIO = 2.0 / 7.0;
         private const int LAMBDA_BRIDGE_THRESHOLD = 144_000;
+        private const long LDOW_OPTIMAL_ALLOCATION_UNIT_BYTES = 170L * 1024L * 1024L;
         private const double UGPE_BASE_FRICTION = 0.666;
         private const double GRAVITY_CONSTANT = 9.80665;
         private const double SIMD_EFFICIENCY_AVX2 = 0.25;
@@ -84,6 +92,17 @@ namespace SovereignEngine.Native
             nuint chunkSize,
             IntPtr outHashesPtr
         );
+
+        public static GovernanceGuardrailStatus GetGovernanceGuardrailStatus()
+        {
+            return new GovernanceGuardrailStatus(
+                TargetP9999LatencyUs: 10.0,
+                TargetMaxWaf: 1.20,
+                OptimalAllocationUnitBytes: LDOW_OPTIMAL_ALLOCATION_UNIT_BYTES,
+                GovernorThreads: CalculateGovernorThreads(),
+                Avx2Accelerated: Avx2.IsSupported
+            );
+        }
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public static double CalculateNibbleEntropyEstimate(ReadOnlySpan<byte> buffer)
@@ -411,7 +430,7 @@ namespace SovereignEngine.Native
                     for (; i <= len - 64; i += 64)
                     {
                         Vector512<byte> current = Vector512.Load(pBuffer + i);
-                        Vector512<byte> xored = Vector512.BitwiseXor(current, mask512);
+                        Vector512<byte> xored = Vector512.Xor(current, mask512);
                         xored.Store(pBuffer + i);
                     }
                 }
