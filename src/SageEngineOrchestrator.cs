@@ -1,6 +1,4 @@
 using System;
-using System.IO;
-using System.Net.Http;
 using System.Threading;
 using System.Threading.Tasks;
 
@@ -8,7 +6,7 @@ namespace SovereignSSD.Engine
 {
     public sealed class SageEngineOrchestrator
     {
-        private static readonly Lock LogLock = new Lock();
+        private static readonly object LogLock = new();
 
         public ValueTask RunOrchestrationCycleAsync(string contextInfo, CancellationToken cancellationToken = default)
         {
