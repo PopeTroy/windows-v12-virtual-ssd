@@ -1,3 +1,10 @@
+#if defined(_WIN32)
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#endif
+
 #include <iostream>
 #include <cmath>
 #include <algorithm>
@@ -6,11 +13,9 @@
 #include <thread>
 #include <cstdlib>
 
-#if defined(_WIN32)
-#include <windows.h>
-#endif
-
-// Fixed-Point Q16.16 Helpers
+// ============================================================================
+// FIXED-POINT Q16.16 HELPERS (OPTIMIZED INTEGERS & BITWISE SHIFTS)
+// ============================================================================
 #define FLOAT_TO_Q16(x) (static_cast<int32_t>((x) * 65536.0f))
 #define Q16_TO_FLOAT(x) (static_cast<float>(x) / 65536.0f)
 
@@ -33,6 +38,9 @@ inline int32_t LOW_PASS_FILTER(int32_t current_val, int32_t prev_val, int32_t al
     return ADD_Q16(prev_val, MULT_Q16(alpha_q16, diff));
 }
 
+// ============================================================================
+// SHARED MEMORY TELEMETRY & CONSENSUS ANCHOR STRUCTS
+// ============================================================================
 #pragma pack(push, 1)
 struct SystemTelemetryEvent {
     uint64_t timestamp_us;
@@ -70,6 +78,9 @@ struct ConsensusRealityAnchor {
     }
 };
 
+// ============================================================================
+// BLACK ZETSU FAILSAFE ENGINE (HARDWARE / PROCESS CIRCUIT BREAKER)
+// ============================================================================
 class BlackZetsuEngine {
 private:
     bool failsafe_tripped;
@@ -104,6 +115,9 @@ inline void ApplyBodyFlickerFrameCulling(SharedData* shm, uint32_t maxTailDrift 
     }
 }
 
+// ============================================================================
+// QUANTUM-INSPIRED ADAPTIVE PID CONTROLLER (Q16.16)
+// ============================================================================
 class QuantumInspiredPID {
 private:
     int32_t Kp, Ki, Kd;
@@ -193,7 +207,7 @@ public:
 
         int32_t d_term = MULT_Q16(current_kd, error_rate);
         int32_t output = ADD_Q16(p_term, ADD_Q16(i_term, d_term));
-        output = std::max(out_min, std::min(output, out_max));
+        output = (std::max)(out_min, (std::min)(output, out_max));
 
         prev_error = error;
         adaptGains(setpoint, process_variable, output);
@@ -201,6 +215,37 @@ public:
         return output;
     }
 };
+
+// ============================================================================
+// EXPORTED C ABI ENTRYPOINTS FOR SOVEREIGN_COMPRESSOR.DLL
+// ============================================================================
+#if defined(_WIN32)
+#define SOVEREIGN_API __declspec(dllexport)
+#else
+#define SOVEREIGN_API
+#endif
+
+extern "C" {
+
+SOVEREIGN_API int32_t SovereignPidComputeQ16(
+    float kp, float ki, float kd,
+    float min_out, float max_out,
+    float setpoint, float raw_pv, float dt_sec
+) {
+    QuantumInspiredPID pid(kp, ki, kd, min_out, max_out);
+    return pid.compute(FLOAT_TO_Q16(setpoint), FLOAT_TO_Q16(raw_pv), FLOAT_TO_Q16(dt_sec));
+}
+
+SOVEREIGN_API void SovereignCullSharedRing(SharedData* shm, uint32_t max_tail_drift) {
+    ApplyBodyFlickerFrameCulling(shm, max_tail_drift);
+}
+
+SOVEREIGN_API void SovereignGenerateAnchor(ConsensusRealityAnchor* anchor, uint32_t entropy, uint64_t ts_us) {
+    if (!anchor) return;
+    anchor->generate_anchor(entropy, ts_us);
+}
+
+} // extern "C"
 
 int main() {
     QuantumInspiredPID pid(2.0f, 0.2f, 0.05f, -100.0f, 100.0f, 0.005f, 0.4f, 0.30f);
@@ -225,7 +270,6 @@ int main() {
 
         pv_q16 += MULT_Q16(output_q16, FLOAT_TO_Q16(process_gain));
 
-        // Thermal / output runaway guard via Black Zetsu Engine
         if (Q16_TO_FLOAT(pv_q16) > 500.0f) {
             zetsu_guard.execute_hard_shutdown("Process variable exceeded 500.0 C safety envelope.");
         }
