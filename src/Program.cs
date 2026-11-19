@@ -1,18 +1,11 @@
 using System;
+using System.Buffers;
 using System.Collections.Concurrent;
-using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
-using System.IO.Compression;
-using System.IO.MemoryMappedFiles;
 using System.Net.Http;
-using System.Net.Http.Headers;
-using System.Runtime.InteropServices;
-using System.Runtime.Intrinsics;
-using System.Runtime.Intrinsics.X86;
-using System.Security.Cryptography;
-using System.Text;
 using System.Threading;
+using System.Threading.Channels;
 using System.Threading.Tasks;
 using SovereignSSD.Engine;
 
@@ -23,25 +16,38 @@ namespace SovereignSSD
         private const string VIRTUAL_DRIVE_LETTER = "V:";
         private const string PUTER_FS_ENDPOINT = "https://celsiusmediagroup.co.za/puterfs";
         private const long TOTAL_CLOUD_CAPACITY_BYTES = 100L * 1024L * 1024L * 1024L; // 100 GB Allocation Target
+        private const int MAX_CONCURRENT_INGEST = 4;
 
-        private static readonly HttpClient HttpClient = new HttpClient { Timeout = TimeSpan.FromHours(2) };
-        private static readonly object ConsoleLock = new object();
+        private static readonly HttpClient HttpClient = new HttpClient
+        {
+            Timeout = TimeSpan.FromSeconds(120),
+            DefaultVersionPolicy = HttpVersionPolicy.RequestVersionOrHigher
+        };
+
+        private static readonly Lock ConsoleLock = new Lock();
+        private static readonly SemaphoreSlim IngestLimiter = new SemaphoreSlim(MAX_CONCURRENT_INGEST, MAX_CONCURRENT_INGEST);
+        private static readonly Channel<string> PendingEntriesChannel = Channel.CreateUnbounded<string>(
+            new UnboundedChannelOptions { SingleReader = true, SingleWriter = false });
+
         private static string LocalStoragePath = string.Empty;
-        private static long CurrentCloudUsedBytes = 0;
-
-        // Sage Engine Orchestrator Instance
+        private static long _currentCloudUsedBytes = 0;
         private static SageEngineOrchestrator? _sageOrchestrator;
+
+        private static long CurrentCloudUsedBytes
+        {
+            get => Interlocked.Read(ref _currentCloudUsedBytes);
+            set => Interlocked.Exchange(ref _currentCloudUsedBytes, Math.Max(0L, value));
+        }
 
         [STAThread]
         static async Task Main(string[] args)
         {
-            // Elevate process priority for high-throughput memory-mapped SSD operations
+            using CancellationTokenSource cts = new CancellationTokenSource();
+
             try
             {
-                using (Process currentProcess = Process.GetCurrentProcess())
-                {
-                    currentProcess.PriorityClass = ProcessPriorityClass.High;
-                }
+                using Process currentProcess = Process.GetCurrentProcess();
+                currentProcess.PriorityClass = ProcessPriorityClass.High;
             }
             catch (Exception ex)
             {
@@ -57,41 +63,59 @@ namespace SovereignSSD
             SafeLog(" Tactics Active: Amenotejikara | Daikokuten | Tenseigan | Jogan | Ohirume", ConsoleColor.Magenta);
             SafeLog("===================================================================\n", ConsoleColor.Cyan);
 
+            AppDomain.CurrentDomain.ProcessExit += (_, _) =>
+            {
+                cts.Cancel();
+                UnmountVirtualDrivePartition(VIRTUAL_DRIVE_LETTER);
+            };
+
+            Console.CancelKeyPress += (_, e) =>
+            {
+                e.Cancel = true;
+                cts.Cancel();
+                UnmountVirtualDrivePartition(VIRTUAL_DRIVE_LETTER);
+            };
+
             try
             {
-                // Initialize 12-Cylinder Sage Orchestrator
                 _sageOrchestrator = new SageEngineOrchestrator();
 
-                // Step 1: Establish Local Storage Sub-Directory
-                LocalStoragePath = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "SpaceTimeV12SSD");
+                LocalStoragePath = Path.Combine(
+                    Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                    "SpaceTimeV12SSD");
+
                 if (!Directory.Exists(LocalStoragePath))
                 {
                     Directory.CreateDirectory(LocalStoragePath);
                 }
 
-                // Step 2: Mount Virtual Folder as standard Windows Drive Partition (V:)
                 MountVirtualDrivePartition(VIRTUAL_DRIVE_LETTER, LocalStoragePath);
-
                 SafeLog($"[MOUNT SUCCESS] Partition online at {VIRTUAL_DRIVE_LETTER}\\ -> Surface target ready in 'This PC'", ConsoleColor.Green);
 
-                // Step 3: Fetch initial cloud metrics
-                await SyncCloudCapacityMetricsAsync();
+                await SyncCloudCapacityMetricsAsync(cts.Token);
 
-                // Step 4: Run initial sweep on existing partition items
-                await InitialSyncSweepAsync($"{VIRTUAL_DRIVE_LETTER}\\");
+                string mountRoot = $"{VIRTUAL_DRIVE_LETTER}\\";
+                Task consumerTask = Task.Run(() => ConsumePendingEntriesAsync(mountRoot, cts.Token), cts.Token);
 
-                // Step 5: Intercept drop events on Mounted Partition
-                StartActiveZeroWeightInterceptor($"{VIRTUAL_DRIVE_LETTER}\\");
+                await InitialSyncSweepAsync(mountRoot, cts.Token);
+                using FileSystemWatcher watcher = StartActiveZeroWeightInterceptor(mountRoot);
 
-                SafeLog($"\n[READY] Space Time SSD Active. Drop files directly into {VIRTUAL_DRIVE_LETTER}\\...\n", ConsoleColor.Magenta);
+                SafeLog($"\n[READY] Space Time SSD Active. Drop files directly into {mountRoot}...\n", ConsoleColor.Magenta);
 
-                AppDomain.CurrentDomain.ProcessExit += (s, e) => UnmountVirtualDrivePartition(VIRTUAL_DRIVE_LETTER);
-
-                await Task.Delay(-1); // Keep process alive
+                await Task.Delay(Timeout.Infinite, cts.Token);
+                await consumerTask;
+            }
+            catch (OperationCanceledException)
+            {
+                SafeLog("[SHUTDOWN] Space Time SSD stopping cleanly.", ConsoleColor.Yellow);
             }
             catch (Exception ex)
             {
                 SafeLog($"[CRITICAL ERROR] Core initialization failure: {ex.Message}", ConsoleColor.Red);
+            }
+            finally
+            {
+                UnmountVirtualDrivePartition(VIRTUAL_DRIVE_LETTER);
             }
         }
 
@@ -126,7 +150,7 @@ namespace SovereignSSD
                 };
 
                 using Process? p = Process.Start(psi);
-                p?.WaitForExit();
+                p?.WaitForExit(5000);
             }
             catch (Exception ex)
             {
@@ -147,7 +171,7 @@ namespace SovereignSSD
                 };
 
                 using Process? p = Process.Start(psi);
-                p?.WaitForExit();
+                p?.WaitForExit(3000);
             }
             catch
             {
@@ -159,19 +183,23 @@ namespace SovereignSSD
 
         #region Drive Metrics & Sync
 
-        private static async Task SyncCloudCapacityMetricsAsync()
+        private static async Task SyncCloudCapacityMetricsAsync(CancellationToken cancellationToken)
         {
             try
             {
-                using var response = await HttpClient.GetAsync($"{PUTER_FS_ENDPOINT}?action=CAPACITY");
+                using var response = await HttpClient.GetAsync($"{PUTER_FS_ENDPOINT}?action=CAPACITY", cancellationToken);
                 if (response.IsSuccessStatusCode)
                 {
-                    string res = await response.Content.ReadAsStringAsync();
-                    if (long.TryParse(res, out long bytesUsed))
+                    string res = await response.Content.ReadAsStringAsync(cancellationToken);
+                    if (long.TryParse(res.Trim(), out long bytesUsed))
                     {
                         CurrentCloudUsedBytes = bytesUsed;
                     }
                 }
+            }
+            catch (OperationCanceledException)
+            {
+                throw;
             }
             catch
             {
@@ -183,14 +211,15 @@ namespace SovereignSSD
 
         private static void DisplaySpaceMetrics(long incomingPayloadSize)
         {
-            long availableCloudBytes = TOTAL_CLOUD_CAPACITY_BYTES - CurrentCloudUsedBytes;
+            long usedBytes = CurrentCloudUsedBytes;
+            long availableCloudBytes = TOTAL_CLOUD_CAPACITY_BYTES - usedBytes;
             DriveInfo localDrive = new DriveInfo("C:\\");
 
             lock (ConsoleLock)
             {
                 Console.ForegroundColor = ConsoleColor.Yellow;
                 Console.WriteLine("-------------------------------------------------------------------");
-                Console.WriteLine($"[CLOUD METRICS] Total: {FormatBytes(TOTAL_CLOUD_CAPACITY_BYTES)} | Used: {FormatBytes(CurrentCloudUsedBytes)} | Available: {FormatBytes(availableCloudBytes)}");
+                Console.WriteLine($"[CLOUD METRICS] Total: {FormatBytes(TOTAL_CLOUD_CAPACITY_BYTES)} | Used: {FormatBytes(usedBytes)} | Available: {FormatBytes(availableCloudBytes)}");
                 if (incomingPayloadSize > 0)
                 {
                     Console.WriteLine($"[INCOMING OBJECT] Raw Size: {FormatBytes(incomingPayloadSize)} | Remaining: {FormatBytes(availableCloudBytes - incomingPayloadSize)}");
@@ -205,61 +234,103 @@ namespace SovereignSSD
 
         #region Drive Sweeper & Partition Interceptor
 
-        private static async Task InitialSyncSweepAsync(string mountPath)
+        private static async Task InitialSyncSweepAsync(string mountPath, CancellationToken cancellationToken)
         {
             SafeLog($"[SWEEP] Checking partition {mountPath} for local items...", ConsoleColor.Gray);
-            await ProcessDirectoryRecursivelyAsync(mountPath, mountPath);
+            await ProcessDirectoryRecursivelyAsync(mountPath, mountPath, cancellationToken);
         }
 
-        private static void StartActiveZeroWeightInterceptor(string mountPath)
+        private static FileSystemWatcher StartActiveZeroWeightInterceptor(string mountPath)
         {
             FileSystemWatcher watcher = new FileSystemWatcher(mountPath)
             {
                 NotifyFilter = NotifyFilters.FileName | NotifyFilters.DirectoryName | NotifyFilters.Size | NotifyFilters.LastWrite,
                 IncludeSubdirectories = true,
+                InternalBufferSize = 64 * 1024,
                 EnableRaisingEvents = true
             };
 
-            watcher.Created += async (s, e) => { await HandleFileSystemEntryAsync(e.FullPath, mountPath); };
-            watcher.Renamed += async (s, e) => { await HandleFileSystemEntryAsync(e.FullPath, mountPath); };
+            watcher.Created += (_, e) => { _ = PendingEntriesChannel.Writer.TryWrite(e.FullPath); };
+            watcher.Renamed += (_, e) => { _ = PendingEntriesChannel.Writer.TryWrite(e.FullPath); };
+            watcher.Error += (_, e) =>
+            {
+                SafeLog($"[WATCHER WARNING] {e.GetException().Message}", ConsoleColor.Yellow);
+            };
+
+            return watcher;
         }
 
-        private static async Task HandleFileSystemEntryAsync(string targetPath, string mountPath)
+        private static async Task ConsumePendingEntriesAsync(string mountPath, CancellationToken cancellationToken)
+        {
+            await foreach (string entryPath in PendingEntriesChannel.Reader.ReadAllAsync(cancellationToken))
+            {
+                await IngestLimiter.WaitAsync(cancellationToken);
+                _ = Task.Run(async () =>
+                {
+                    try
+                    {
+                        await HandleFileSystemEntryAsync(entryPath, mountPath, cancellationToken);
+                    }
+                    finally
+                    {
+                        IngestLimiter.Release();
+                    }
+                }, cancellationToken);
+            }
+        }
+
+        private static async Task HandleFileSystemEntryAsync(string targetPath, string mountPath, CancellationToken cancellationToken)
         {
             if (Directory.Exists(targetPath))
             {
-                await ProcessDirectoryRecursivelyAsync(targetPath, mountPath);
+                await ProcessDirectoryRecursivelyAsync(targetPath, mountPath, cancellationToken);
             }
             else if (File.Exists(targetPath))
             {
-                await ProcessAndStreamToCloudImmediatelyAsync(targetPath, mountPath);
+                await ProcessAndStreamToCloudImmediatelyAsync(targetPath, mountPath, cancellationToken);
             }
         }
 
-        private static async Task ProcessDirectoryRecursivelyAsync(string currentDirectoryPath, string mountPath)
+        private static async Task ProcessDirectoryRecursivelyAsync(
+            string currentDirectoryPath,
+            string mountPath,
+            CancellationToken cancellationToken)
         {
+            cancellationToken.ThrowIfCancellationRequested();
+
             try
             {
-                if (currentDirectoryPath != mountPath)
+                if (!string.Equals(
+                    Path.GetFullPath(currentDirectoryPath).TrimEnd('\\'),
+                    Path.GetFullPath(mountPath).TrimEnd('\\'),
+                    StringComparison.OrdinalIgnoreCase))
                 {
                     string relativeDirPath = NormalizeVirtualPath(Path.GetRelativePath(mountPath, currentDirectoryPath));
-                    await PuterFS_MkdirAsync(relativeDirPath);
+                    await PuterFS_MkdirAsync(relativeDirPath, cancellationToken);
                 }
 
                 foreach (string subDir in Directory.GetDirectories(currentDirectoryPath))
                 {
-                    await ProcessDirectoryRecursivelyAsync(subDir, mountPath);
+                    await ProcessDirectoryRecursivelyAsync(subDir, mountPath, cancellationToken);
                 }
 
                 foreach (string filePath in Directory.GetFiles(currentDirectoryPath))
                 {
-                    await ProcessAndStreamToCloudImmediatelyAsync(filePath, mountPath);
+                    await ProcessAndStreamToCloudImmediatelyAsync(filePath, mountPath, cancellationToken);
                 }
 
-                if (currentDirectoryPath != mountPath && Directory.GetFileSystemEntries(currentDirectoryPath).Length == 0)
+                if (!string.Equals(
+                    Path.GetFullPath(currentDirectoryPath).TrimEnd('\\'),
+                    Path.GetFullPath(mountPath).TrimEnd('\\'),
+                    StringComparison.OrdinalIgnoreCase) &&
+                    Directory.GetFileSystemEntries(currentDirectoryPath).Length == 0)
                 {
                     Directory.Delete(currentDirectoryPath, recursive: false);
                 }
+            }
+            catch (OperationCanceledException)
+            {
+                throw;
             }
             catch (Exception ex)
             {
@@ -267,7 +338,7 @@ namespace SovereignSSD
             }
         }
 
-        private static async Task PuterFS_MkdirAsync(string virtualPath)
+        private static async Task PuterFS_MkdirAsync(string virtualPath, CancellationToken cancellationToken)
         {
             try
             {
@@ -275,7 +346,12 @@ namespace SovereignSSD
                 content.Add(new StringContent("MKDIR"), "action");
                 content.Add(new StringContent(virtualPath), "virtualPath");
 
-                await HttpClient.PostAsync(PUTER_FS_ENDPOINT, content);
+                using var response = await HttpClient.PostAsync(PUTER_FS_ENDPOINT, content, cancellationToken);
+                response.EnsureSuccessStatusCode();
+            }
+            catch (OperationCanceledException)
+            {
+                throw;
             }
             catch
             {
@@ -283,7 +359,10 @@ namespace SovereignSSD
             }
         }
 
-        private static async Task ProcessAndStreamToCloudImmediatelyAsync(string localPath, string mountPath)
+        private static async Task ProcessAndStreamToCloudImmediatelyAsync(
+            string localPath,
+            string mountPath,
+            CancellationToken cancellationToken)
         {
             string fileName = Path.GetFileName(localPath);
             if (fileName.Equals("desktop.ini", StringComparison.OrdinalIgnoreCase) || fileName.EndsWith(".sov_tmp"))
@@ -293,78 +372,60 @@ namespace SovereignSSD
 
             string relativePath = NormalizeVirtualPath(Path.GetRelativePath(mountPath, localPath));
 
-            if (!WaitForFileReady(localPath, timeoutMs: 10000))
+            if (!await WaitForFileReadyAsync(localPath, timeoutMs: 10000, cancellationToken))
             {
                 SafeLog($"[SKIP] File locked: {relativePath}", ConsoleColor.DarkYellow);
                 return;
             }
 
-            // Ocular: Jogan Dimensional Portal Path Audit (Eliminates false 404s)
-            bool pathValid = ShinobiTactics.JoganVerifyDimensionalPath(relativePath);
-            if (!pathValid) return;
+            if (!ShinobiTactics.JoganVerifyDimensionalPath(relativePath))
+            {
+                return;
+            }
 
-            // ENSURE PARENT DIRECTORIES EXIST ON CLOUD BEFORE UPLOADING
             string? parentDir = Path.GetDirectoryName(relativePath);
             if (!string.IsNullOrEmpty(parentDir) && parentDir != "." && parentDir != "/")
             {
-                await EnsureRemoteDirectoryPathAsync(parentDir);
+                await EnsureRemoteDirectoryPathAsync(parentDir, cancellationToken);
             }
 
-            // Tactic: Kawarimi Instant Response Stub
             ShinobiTactics.RegisterKawarimiDeception(localPath);
-
-            // Tactic: Flying Thunder God (Hiraishin) Direct Hash Seal
             string sealId = ShinobiTactics.ApplyHiraishinSeal(relativePath);
             SafeLog($"[HIRAISHIN TELEPORT] Sector Seal [{sealId}] attached to path {relativePath}", ConsoleColor.Gray);
 
-            // Ocular: Sharingan Mirror Pattern
-            ShinobiTactics.SharinganObservePattern(relativePath, 0, (int)new FileInfo(localPath).Length);
+            FileInfo info = new FileInfo(localPath);
+            long rawFileSize = info.Exists ? info.Length : 0L;
+            ShinobiTactics.SharinganObservePattern(relativePath, 0, (int)Math.Min(rawFileSize, int.MaxValue));
 
-            // Execute processing under Kurama Overclocking
             await ShinobiTactics.ExecuteKuramaOverclockingAsync(async () =>
             {
                 DriveInfo driveBefore = new DriveInfo("C:\\");
-                long rawFileSize = new FileInfo(localPath).Length;
 
                 SafeLog($"\n[INTERCEPTED PARTITION ENTRY] {relativePath}", ConsoleColor.Cyan);
                 DisplaySpaceMetrics(rawFileSize);
 
                 try
                 {
-                    // SYSTEM.IO.MEMORYMAPPEDFILES & AVX2 SIMD DIRECT PIPELINE
                     byte[] fileBytes = ShinobiTactics.MemoryMappedVectorizedReadPass(localPath);
-
-                    // Tenseigan IO Throttle Dampening
                     ShinobiTactics.TenseiganPulseGravityBalance(fileBytes.Length);
-
-                    // Isobu Fluid Stream Hardening
                     byte[] hardenedPayload = ShinobiTactics.ApplyIsobuStreamHardening(fileBytes);
-
-                    // Daikokuten Dimensional Shrinkage
                     byte[] compressedPayload = ShinobiTactics.DaikokutenStoreInPocketDimension(hardenedPayload);
 
-                    // Trigger 12-Cylinder Sage Engine Orchestration
                     if (_sageOrchestrator != null)
                     {
                         await _sageOrchestrator.RunOrchestrationCycleAsync($"Payload: {relativePath} | Size: {rawFileSize} bytes");
                     }
 
-                    // Tactic: Kage Bunshin Payload Chunking (16MB Clones)
-                    Memory<byte>[] clones = ShinobiTactics.GenerateKageBunshins(compressedPayload, chunkSizeMb: 16);
+                    _ = ShinobiTactics.GenerateKageBunshins(compressedPayload, chunkSizeMb: 16);
 
-                    // Ohirume Burst Acceleration Engine
                     await ShinobiTactics.OhirumeSunBurstAccelerationAsync(async () =>
                     {
-                        // Stream to cloud with sanitized path handling
-                        await StreamToCloudWithProgressBarAsync("WRITE", relativePath, compressedPayload);
+                        await StreamToCloudWithProgressBarAsync("WRITE", relativePath, compressedPayload, cancellationToken);
                     });
 
-                    CurrentCloudUsedBytes += compressedPayload.Length;
+                    Interlocked.Add(ref _currentCloudUsedBytes, compressedPayload.Length);
 
-                    // Amenotejikara Memory Swap Registration
                     ShinobiTactics.AmenotejikaraSwapLocation(localPath, relativePath, compressedPayload);
-
-                    // Shikaku Memory Pinning for Fast Re-Access
                     ShinobiTactics.ApplyShikakuSandSeal(sealId, compressedPayload);
 
                     if (File.Exists(localPath))
@@ -373,7 +434,6 @@ namespace SovereignSSD
                         SafeLog($"[ZERO-WEIGHT PURGE] Erased local buffer: {relativePath}", ConsoleColor.Gray);
                     }
 
-                    // Release Kawarimi Stub
                     ShinobiTactics.ReleaseKawarimiDeception(localPath);
 
                     DriveInfo driveAfter = new DriveInfo("C:\\");
@@ -382,8 +442,11 @@ namespace SovereignSSD
                     SafeLog($"[VERIFICATION] Physical Local Disk Consumption: {FormatBytes(Math.Max(0, diskDifference))} (ZERO-WEIGHT CONFIRMED)", ConsoleColor.Green);
                     SafeLog($"[CLOUD STATUS] Upload Complete. Available Space: {FormatBytes(TOTAL_CLOUD_CAPACITY_BYTES - CurrentCloudUsedBytes)}\n", ConsoleColor.Green);
 
-                    // Ocular: Byakugan Memory Audit
                     ShinobiTactics.ByakuganFullSystemAudit();
+                }
+                catch (OperationCanceledException)
+                {
+                    throw;
                 }
                 catch (Exception ex)
                 {
@@ -392,7 +455,7 @@ namespace SovereignSSD
             });
         }
 
-        private static async Task EnsureRemoteDirectoryPathAsync(string directoryPath)
+        private static async Task EnsureRemoteDirectoryPathAsync(string directoryPath, CancellationToken cancellationToken)
         {
             string normalized = NormalizeVirtualPath(directoryPath);
             string[] parts = normalized.Split('/', StringSplitOptions.RemoveEmptyEntries);
@@ -400,12 +463,17 @@ namespace SovereignSSD
 
             foreach (string part in parts)
             {
+                cancellationToken.ThrowIfCancellationRequested();
                 currentPath = string.IsNullOrEmpty(currentPath) ? part : $"{currentPath}/{part}";
-                await PuterFS_MkdirAsync(currentPath);
+                await PuterFS_MkdirAsync(currentPath, cancellationToken);
             }
         }
 
-        private static async Task StreamToCloudWithProgressBarAsync(string action, string virtualPath, byte[] payload)
+        private static async Task StreamToCloudWithProgressBarAsync(
+            string action,
+            string virtualPath,
+            byte[] payload,
+            CancellationToken cancellationToken)
         {
             string[] pathSegments = virtualPath.Split(new[] { '/', '\\' }, StringSplitOptions.RemoveEmptyEntries);
             for (int i = 0; i < pathSegments.Length; i++)
@@ -429,16 +497,17 @@ namespace SovereignSSD
                 content.Add(streamContent, "payload", Path.GetFileName(sanitizedPath) + ".sov");
             }
 
-            HttpResponseMessage response = await HttpClient.PostAsync(PUTER_FS_ENDPOINT, content);
+            using HttpResponseMessage response = await HttpClient.PostAsync(PUTER_FS_ENDPOINT, content, cancellationToken);
             response.EnsureSuccessStatusCode();
             SafeLog(string.Empty);
         }
 
         private static void RenderProgressBar(long bytesSent, long totalBytes)
         {
-            double percentage = (double)bytesSent / totalBytes * 100;
+            if (totalBytes <= 0) return;
+            double percentage = (double)bytesSent / totalBytes * 100.0;
             int totalBlocks = 30;
-            int filledBlocks = (int)Math.Round((percentage / 100) * totalBlocks);
+            int filledBlocks = Math.Clamp((int)Math.Round((percentage / 100.0) * totalBlocks), 0, totalBlocks);
 
             string bar = new string('█', filledBlocks) + new string('-', totalBlocks - filledBlocks);
 
@@ -448,23 +517,22 @@ namespace SovereignSSD
             }
         }
 
-        private static bool WaitForFileReady(string path, int timeoutMs)
+        private static async Task<bool> WaitForFileReadyAsync(string path, int timeoutMs, CancellationToken cancellationToken)
         {
             int elapsed = 0;
             const int interval = 200;
 
             while (elapsed < timeoutMs)
             {
+                cancellationToken.ThrowIfCancellationRequested();
                 try
                 {
-                    using (FileStream fs = File.Open(path, FileMode.Open, FileAccess.ReadWrite, FileShare.None))
-                    {
-                        return true;
-                    }
+                    using FileStream fs = File.Open(path, FileMode.Open, FileAccess.ReadWrite, FileShare.None);
+                    return true;
                 }
                 catch (IOException)
                 {
-                    Thread.Sleep(interval);
+                    await Task.Delay(interval, cancellationToken);
                     elapsed += interval;
                 }
             }
@@ -480,7 +548,7 @@ namespace SovereignSSD
         {
             string[] suffixes = { "B", "KB", "MB", "GB", "TB" };
             int counter = 0;
-            decimal number = (decimal)bytes;
+            decimal number = bytes;
             while (Math.Round(number / 1024) >= 1 && counter < suffixes.Length - 1)
             {
                 number /= 1024;
@@ -493,13 +561,13 @@ namespace SovereignSSD
 
         #region Progressable Stream Class
 
-        private class ProgressableStreamContent : HttpContent
+        private sealed class ProgressableStreamContent : HttpContent
         {
             private readonly byte[] _content;
             private readonly int _bufferSize;
-            private readonly Action<long, long> _progress;
+            private readonly Action<long, long>? _progress;
 
-            public ProgressableStreamContent(byte[] content, int bufferSize, Action<long, long> progress)
+            public ProgressableStreamContent(byte[] content, int bufferSize, Action<long, long>? progress)
             {
                 _content = content ?? throw new ArgumentNullException(nameof(content));
                 _bufferSize = bufferSize > 0 ? bufferSize : 4096;
@@ -514,7 +582,7 @@ namespace SovereignSSD
                 for (int i = 0; i < totalLength; i += _bufferSize)
                 {
                     int length = Math.Min(_bufferSize, (int)(totalLength - i));
-                    await stream.WriteAsync(_content, i, length);
+                    await stream.WriteAsync(_content.AsMemory(i, length));
                     sent += length;
                     _progress?.Invoke(sent, totalLength);
                 }
