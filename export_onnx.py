@@ -1,47 +1,41 @@
-"""
-============================================================================
-PYTORCH TO ONNX CONVERSION PIPELINE
-============================================================================
-Exports the PyTorch PID Policy Network straight to ONNX runtime format on CPU.
-============================================================================
-"""
-
-import sys
 import io
+import sys
 import torch
 import torch.nn as nn
 
-# Force UTF-8 encoding on standard output to prevent Windows CP1252 emoji crash
-sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
-sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8')
+if hasattr(sys.stdout, "buffer"):
+    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8")
+if hasattr(sys.stderr, "buffer"):
+    sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding="utf-8")
+
 
 class PIDPolicyNetwork(nn.Module):
     """
     Inputs:  [error, integral_error, derivative_error, process_variable]
     Outputs: [Kp, Ki, Kd]
     """
+
     def __init__(self):
-        super(PIDPolicyNetwork, self).__init__()
+        super().__init__()
         self.net = nn.Sequential(
             nn.Linear(4, 32),
             nn.ReLU(),
             nn.Linear(32, 32),
             nn.ReLU(),
             nn.Linear(32, 3),
-            nn.Softplus() # Guarantees non-negative PID gains
+            nn.Softplus(),
         )
 
-    def forward(self, x):
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
         return self.net(x)
+
 
 if __name__ == "__main__":
     model = PIDPolicyNetwork()
     model.eval()
 
-    # Dummy input representing state: [error, integral_error, d_error, PV]
     dummy_input = torch.randn(1, 4, dtype=torch.float32)
 
-    # Direct PyTorch to ONNX export using legacy exporter to bypass Dynamo issues
     torch.onnx.export(
         model,
         dummy_input,
@@ -49,9 +43,9 @@ if __name__ == "__main__":
         export_params=True,
         opset_version=18,
         do_constant_folding=True,
-        input_names=['state'],
-        output_names=['gains'],
-        dynamic_axes={'state': {0: 'batch_size'}, 'gains': {0: 'batch_size'}},
-        dynamo=False
+        input_names=["state"],
+        output_names=["gains"],
+        dynamic_axes={"state": {0: "batch_size"}, "gains": {0: "batch_size"}},
+        dynamo=False,
     )
     print("Successfully exported 'pid_tuner.onnx' using PyTorch CPU runtime!")
