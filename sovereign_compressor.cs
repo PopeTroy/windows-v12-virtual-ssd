@@ -49,8 +49,6 @@ namespace SovereignEngine.Native
 
         public static CompressionPolicy ActivePolicy { get; set; } = new();
 
-        #region --- Native P/Invoke Declarations ---
-
         [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl, EntryPoint = "sovereign_compress_chunk")]
         private static unsafe extern int NativeCompressChunk(
             byte* inputPtr,
@@ -86,10 +84,6 @@ namespace SovereignEngine.Native
             nuint chunkSize,
             IntPtr outHashesPtr
         );
-
-        #endregion
-
-        #region --- GEODESIC TRAJECTORY & ENTROPY HEURISTICS ---
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public static double CalculateNibbleEntropyEstimate(ReadOnlySpan<byte> buffer)
@@ -216,10 +210,6 @@ namespace SovereignEngine.Native
             int governorScaled = (int)Math.Ceiling(sysCores * LIGHT_MATRIX_RATIO);
             return Math.Clamp(governorScaled, 2, FIELD_GOVERNOR_BASE);
         }
-
-        #endregion
-
-        #region --- High-Level Managed Operations ---
 
         public static unsafe byte[] Compress(ReadOnlySpan<byte> input, int compressionLevel = 3)
         {
@@ -371,10 +361,6 @@ namespace SovereignEngine.Native
             }
         }
 
-        #endregion
-
-        #region --- Advanced Stealth & SIMD Masking ---
-
         public static byte[] CreateSessionMaskKey(ReadOnlySpan<byte> keyMaterial)
         {
             byte[] sessionKey = new byte[8];
@@ -432,4 +418,192 @@ namespace SovereignEngine.Native
 
                 if (Avx2.IsSupported && i <= len - 32)
                 {
-                    Vector256<byte> mask256 = Vector2
+                    Vector256<byte> mask256 = Vector256.Create(keyPattern, keyPattern, keyPattern, keyPattern).AsByte();
+
+                    for (; i <= len - 32; i += 32)
+                    {
+                        Vector256<byte> current = Avx2.LoadVector256(pBuffer + i);
+                        Vector256<byte> xorResult = Avx2.Xor(current, mask256);
+                        Avx2.Store(pBuffer + i, xorResult);
+                    }
+                }
+
+                int remaining = len - i;
+                int ulongBlocks = remaining / 8;
+                ulong* pULong = (ulong*)(pBuffer + i);
+
+                for (int j = 0; j < ulongBlocks; j++)
+                {
+                    pULong[j] ^= keyPattern;
+                }
+
+                int tailStart = i + (ulongBlocks * 8);
+                for (int idx = tailStart; idx < len; idx++)
+                {
+                    pBuffer[idx] ^= effectiveKey[idx % 8];
+                }
+            }
+        }
+
+        public static unsafe long CompressZeroCopyStealth(
+            IntPtr inputPtr,
+            int inputLen,
+            IntPtr outputPtr,
+            int maxOutputLen,
+            int compressionLevel = 3,
+            byte[]? sessionMaskKey = null)
+        {
+            if (inputPtr == IntPtr.Zero || outputPtr == IntPtr.Zero)
+                throw new ArgumentNullException("Pointers cannot be null for stealth zero-copy operations.");
+
+            if (inputLen < 0)
+                throw new ArgumentOutOfRangeException(nameof(inputLen), "Input length cannot be negative.");
+
+            if (maxOutputLen < 0)
+                throw new ArgumentOutOfRangeException(nameof(maxOutputLen), "Max output length cannot be negative.");
+
+            if (inputLen == 0) return 0;
+
+            ReadOnlySpan<byte> inputSpan = new ReadOnlySpan<byte>((void*)inputPtr, inputLen);
+            CompressionPolicy policy = ActivePolicy with { Level = compressionLevel };
+            double nibbleEntropy = CalculateNibbleEntropyEstimate(inputSpan);
+            double corrEntropy = CalculateByteCorrelationEntropy(inputSpan);
+            GeodesicTelemetry telemetry = EvaluateGeodesicAndUGPE(inputLen, policy, nibbleEntropy, corrEntropy);
+
+            long bytesWritten = sovereign_compress_chunk_zerocopy(
+                inputPtr,
+                (nuint)inputLen,
+                outputPtr,
+                (nuint)maxOutputLen,
+                telemetry.OptimizedCompressionLevel);
+
+            if (bytesWritten < 0)
+                return bytesWritten;
+
+            if (bytesWritten > maxOutputLen)
+                throw new InvalidOperationException(
+                    $"Native zero-copy write ({bytesWritten}) exceeded allocated capacity ({maxOutputLen}).");
+
+            if (bytesWritten > 0 && bytesWritten <= int.MaxValue)
+            {
+                Span<byte> compressedSpan = new Span<byte>((void*)outputPtr, (int)bytesWritten);
+                if (sessionMaskKey is not null)
+                    ApplyGhostingMask(compressedSpan, sessionMaskKey);
+                else
+                    ApplyGhostingMask(compressedSpan);
+            }
+
+            return bytesWritten;
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public static unsafe bool ScanZeroPaddingVectorized(ReadOnlySpan<byte> data)
+        {
+            if (data.IsEmpty) return true;
+
+            fixed (byte* pData = data)
+            {
+                int len = data.Length;
+                int i = 0;
+
+                if (Vector512.IsHardwareAccelerated && len >= 64)
+                {
+                    Vector512<byte> zero512 = Vector512<byte>.Zero;
+                    for (; i <= len - 64; i += 64)
+                    {
+                        Vector512<byte> current = Vector512.Load(pData + i);
+                        if (!Vector512.EqualsAll(current, zero512))
+                            return false;
+                    }
+                }
+
+                if (Avx2.IsSupported && i <= len - 32)
+                {
+                    Vector256<byte> zeroVector = Vector256<byte>.Zero;
+                    for (; i <= len - 32; i += 32)
+                    {
+                        Vector256<byte> currentBlock = Avx2.LoadVector256(pData + i);
+                        Vector256<byte> cmp = Avx2.CompareEqual(currentBlock, zeroVector);
+                        int mask = Avx2.MoveMask(cmp);
+
+                        if ((uint)mask != 0xFFFFFFFF) return false;
+                    }
+                }
+
+                for (; i < len; i++)
+                {
+                    if (pData[i] != 0) return false;
+                }
+            }
+
+            return true;
+        }
+
+        public sealed class TailedBeastChakraPool : IDisposable, IAsyncDisposable
+        {
+            public IntPtr NativePointer { get; private set; }
+            public long SizeInBytes { get; private set; }
+            private bool _disposed;
+
+            public unsafe TailedBeastChakraPool(long size)
+            {
+                if (size <= 0)
+                    throw new ArgumentOutOfRangeException(nameof(size), "Pool size must be greater than zero.");
+
+                SizeInBytes = size;
+                NativePointer = (IntPtr)NativeMemory.Alloc((nuint)size);
+                NativeMemory.Clear((void*)NativePointer, (nuint)size);
+            }
+
+            public unsafe Span<byte> AsSpan()
+            {
+                ObjectDisposedException.ThrowIf(_disposed || NativePointer == IntPtr.Zero, this);
+                if (SizeInBytes > int.MaxValue)
+                    throw new InvalidOperationException("Pool size exceeds single Span<byte> capacity.");
+
+                return new Span<byte>((void*)NativePointer, (int)SizeInBytes);
+            }
+
+            public unsafe Span<byte> SliceSpan(long offset, int length)
+            {
+                ObjectDisposedException.ThrowIf(_disposed || NativePointer == IntPtr.Zero, this);
+                if (offset < 0 || length < 0 || offset + length > SizeInBytes)
+                    throw new ArgumentOutOfRangeException(nameof(offset), "Requested slice is outside pool bounds.");
+
+                return new Span<byte>((byte*)NativePointer + offset, length);
+            }
+
+            private void ReleaseUnmanaged()
+            {
+                if (!_disposed && NativePointer != IntPtr.Zero)
+                {
+                    unsafe
+                    {
+                        NativeMemory.Free((void*)NativePointer);
+                    }
+                    NativePointer = IntPtr.Zero;
+                    SizeInBytes = 0;
+                    _disposed = true;
+                }
+            }
+
+            public void Dispose()
+            {
+                ReleaseUnmanaged();
+                GC.SuppressFinalize(this);
+            }
+
+            public ValueTask DisposeAsync()
+            {
+                ReleaseUnmanaged();
+                GC.SuppressFinalize(this);
+                return ValueTask.CompletedTask;
+            }
+
+            ~TailedBeastChakraPool()
+            {
+                ReleaseUnmanaged();
+            }
+        }
+    }
+}
