@@ -1,12 +1,15 @@
 using System;
 using System.IO;
 using System.Net.Http;
+using System.Reflection;
 using System.Text;
+using System.Threading;
+using System.Threading.Channels;
 using System.Threading.Tasks;
 using System.Windows;
-using SovereignEngine.Native;
 using IniParser;
 using IniParser.Model;
+using SovereignEngine.Native;
 
 namespace SovereignSSD
 {
@@ -17,59 +20,127 @@ namespace SovereignSSD
         private const string CONFIG_FILE_NAME = "vssdhx_dlss5_config.ini";
         private const string SHINOBI_SHADER_FILE_NAME = "Shinobi_HPL3_DIP_Enhancer.fx";
 
-        private static readonly HttpClient HttpClient = new HttpClient { Timeout = TimeSpan.FromHours(2) };
+        private static readonly HttpClient HttpClient = new HttpClient
+        {
+            Timeout = TimeSpan.FromSeconds(120),
+            DefaultVersionPolicy = HttpVersionPolicy.RequestVersionOrHigher
+        };
+
         private readonly string _baseSSDPath;
         private readonly string _configPath;
         private readonly string _shaderPath;
-        private long _cloudUsedBytes = 0;
-        private long _totalBytesSavedLocally = 0;
+        private readonly Channel<string> _watcherQueue = Channel.CreateUnbounded<string>(
+            new UnboundedChannelOptions { SingleReader = true, SingleWriter = false });
+        private readonly CancellationTokenSource _lifetimeCts = new CancellationTokenSource();
+
+        private FileSystemWatcher? _watcher;
+        private bool _isInitializingUi;
+        private long _cloudUsedBytes;
+        private long _totalBytesSavedLocally;
 
         public MainWindow()
         {
             InitializeComponent();
 
-            _baseSSDPath = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "SovereignV12SSD");
-            if (!Directory.Exists(_baseSSDPath))
-            {
-                Directory.CreateDirectory(_baseSSDPath);
-            }
+            _baseSSDPath = Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                "SovereignV12SSD");
+
+            Directory.CreateDirectory(_baseSSDPath);
 
             _configPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, CONFIG_FILE_NAME);
             _shaderPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, SHINOBI_SHADER_FILE_NAME);
 
-            VerifyNativeBinding();
-            DeployAssetsToGameInjectionDirectory();
-            LoadIniConfiguration();
             UpdateMetricsDisplay();
-            StartFileSystemWatcher();
+            Loaded += OnWindowLoaded;
+            Closed += OnWindowClosed;
+        }
+
+        private async void OnWindowLoaded(object sender, RoutedEventArgs e)
+        {
+            try
+            {
+                await Task.Run(() =>
+                {
+                    VerifyNativeBindingBackground();
+                    EnsureEmbeddedOrDiskAsset(_configPath, "SovereignSSD.Config.vssdhx_dlss5_config.ini");
+                    EnsureEmbeddedOrDiskAsset(_shaderPath, "SovereignSSD.Shaders.Shinobi_HPL3_DIP_Enhancer.fx");
+                    DeployAssetsToGameInjectionDirectory();
+                }, _lifetimeCts.Token);
+
+                LoadIniConfiguration();
+                UpdateMetricsDisplay();
+                StartFileSystemWatcher();
+                _ = Task.Run(() => ProcessWatcherQueueAsync(_lifetimeCts.Token), _lifetimeCts.Token);
+            }
+            catch (OperationCanceledException)
+            {
+                // Window closing
+            }
+            catch (Exception ex)
+            {
+                TxtStatus.Text = $"Initialization Warning: {ex.Message}";
+            }
+        }
+
+        private void OnWindowClosed(object? sender, EventArgs e)
+        {
+            _lifetimeCts.Cancel();
+            if (_watcher is not null)
+            {
+                _watcher.EnableRaisingEvents = false;
+                _watcher.Dispose();
+                _watcher = null;
+            }
+            _lifetimeCts.Dispose();
+        }
+
+        private static void EnsureEmbeddedOrDiskAsset(string diskPath, string manifestResourceName)
+        {
+            if (File.Exists(diskPath))
+                return;
+
+            Assembly asm = Assembly.GetExecutingAssembly();
+            using Stream? resourceStream = asm.GetManifestResourceStream(manifestResourceName);
+            if (resourceStream is null)
+                return;
+
+            string? dir = Path.GetDirectoryName(diskPath);
+            if (!string.IsNullOrEmpty(dir))
+            {
+                Directory.CreateDirectory(dir);
+            }
+
+            using FileStream fs = new FileStream(diskPath, FileMode.Create, FileWriteAccess: FileAccess.Write, FileShare.Read);
+            resourceStream.CopyTo(fs);
         }
 
         private void DeployAssetsToGameInjectionDirectory()
         {
             try
             {
-                // Ensures assets marked with 'CopyToOutputDirectory = Always' are synchronized into the game injection path
                 string targetInjectionDir = _baseSSDPath;
 
                 if (File.Exists(_configPath))
                 {
-                    string targetConfigPath = Path.Combine(targetInjectionDir, CONFIG_FILE_NAME);
-                    File.Copy(_configPath, targetConfigPath, overwrite: true);
+                    File.Copy(_configPath, Path.Combine(targetInjectionDir, CONFIG_FILE_NAME), overwrite: true);
                 }
 
                 if (File.Exists(_shaderPath))
                 {
-                    string targetShaderPath = Path.Combine(targetInjectionDir, SHINOBI_SHADER_FILE_NAME);
-                    File.Copy(_shaderPath, targetShaderPath, overwrite: true);
+                    File.Copy(_shaderPath, Path.Combine(targetInjectionDir, SHINOBI_SHADER_FILE_NAME), overwrite: true);
                 }
             }
             catch (Exception ex)
             {
-                TxtStatus.Text = $"Asset Injection Deployment Warning: {ex.Message}";
+                Dispatcher.InvokeAsync(() =>
+                {
+                    TxtStatus.Text = $"Asset Injection Deployment Warning: {ex.Message}";
+                });
             }
         }
 
-        private void VerifyNativeBinding()
+        private void VerifyNativeBindingBackground()
         {
             try
             {
@@ -79,17 +150,24 @@ namespace SovereignSSD
 
                 if (Encoding.UTF8.GetString(decompressed) != "UESP_V12_INITIALIZATION_VECTOR_SECTOR_0")
                 {
-                    TxtStatus.Text = "Warning: SovereignCompressor native binding verification mismatch.";
+                    Dispatcher.InvokeAsync(() =>
+                    {
+                        TxtStatus.Text = "Warning: SovereignCompressor native binding verification mismatch.";
+                    });
                 }
             }
             catch (Exception ex)
             {
-                TxtStatus.Text = $"Native Binding Error: {ex.Message}";
+                Dispatcher.InvokeAsync(() =>
+                {
+                    TxtStatus.Text = $"Native Binding Error: {ex.Message}";
+                });
             }
         }
 
         private void LoadIniConfiguration()
         {
+            _isInitializingUi = true;
             try
             {
                 if (File.Exists(_configPath))
@@ -113,17 +191,24 @@ namespace SovereignSSD
             {
                 TxtDlssStatus.Text = $"INI Config Read Warning: {ex.Message}";
             }
+            finally
+            {
+                _isInitializingUi = false;
+            }
         }
 
         private void ChkDlssEnable_Changed(object sender, RoutedEventArgs e)
         {
+            if (_isInitializingUi)
+                return;
+
             try
             {
                 if (File.Exists(_configPath))
                 {
                     var parser = new FileIniDataParser();
                     IniData data = parser.ReadFile(_configPath);
-                    data["DLSS5"]["Enabled"] = (ChkDlssEnable.IsChecked == true).ToString().ToLower();
+                    data["DLSS5"]["Enabled"] = (ChkDlssEnable.IsChecked == true).ToString().ToLowerInvariant();
                     parser.WriteFile(_configPath, data);
                     DeployAssetsToGameInjectionDirectory();
                 }
@@ -144,10 +229,12 @@ namespace SovereignSSD
         private void UpdateMetricsDisplay()
         {
             DriveInfo localDrive = new DriveInfo(Path.GetPathRoot(_baseSSDPath) ?? "C:\\");
-            
+            long usedCloud = Interlocked.Read(ref _cloudUsedBytes);
+            long savedLocally = Interlocked.Read(ref _totalBytesSavedLocally);
+
             TxtLocalFree.Text = FormatBytes(localDrive.AvailableFreeSpace);
-            TxtCloudSpace.Text = FormatBytes(Math.Max(0, TOTAL_CLOUD_CAPACITY_BYTES - _cloudUsedBytes));
-            TxtDifferential.Text = FormatBytes(_totalBytesSavedLocally);
+            TxtCloudSpace.Text = FormatBytes(Math.Max(0, TOTAL_CLOUD_CAPACITY_BYTES - usedCloud));
+            TxtDifferential.Text = FormatBytes(savedLocally);
         }
 
         private async void BtnForceSync_Click(object sender, RoutedEventArgs e)
@@ -156,93 +243,143 @@ namespace SovereignSSD
             TxtStatus.Text = "Executing manual force sync sweep on Virtual SSD V:\\...";
             ProgressSync.Value = 0;
 
-            await ProcessDirectoryRecursivelyAsync(_baseSSDPath, _baseSSDPath);
-
-            TxtStatus.Text = "Force sync complete. All objects purged locally and committed to Puter FS.";
-            ProgressSync.Value = 100;
-            BtnForceSync.IsEnabled = true;
-
-            UpdateMetricsDisplay();
+            try
+            {
+                await ProcessDirectoryRecursivelyAsync(_baseSSDPath, _baseSSDPath, _lifetimeCts.Token);
+                TxtStatus.Text = "Force sync complete. All objects purged locally and committed to Puter FS.";
+                ProgressSync.Value = 100;
+            }
+            catch (OperationCanceledException)
+            {
+                TxtStatus.Text = "Sync cancelled.";
+            }
+            catch (Exception ex)
+            {
+                TxtStatus.Text = $"Force sync error: {ex.Message}";
+            }
+            finally
+            {
+                BtnForceSync.IsEnabled = true;
+                UpdateMetricsDisplay();
+            }
         }
 
         private void StartFileSystemWatcher()
         {
-            FileSystemWatcher watcher = new FileSystemWatcher(_baseSSDPath)
+            _watcher = new FileSystemWatcher(_baseSSDPath)
             {
                 NotifyFilter = NotifyFilters.FileName | NotifyFilters.DirectoryName | NotifyFilters.Size | NotifyFilters.LastWrite,
                 IncludeSubdirectories = true,
+                InternalBufferSize = 64 * 1024,
                 EnableRaisingEvents = true
             };
 
-            watcher.Created += async (s, e) => { await Dispatcher.InvokeAsync(async () => await HandleEntryAsync(e.FullPath)); };
-            watcher.Renamed += async (s, e) => { await Dispatcher.InvokeAsync(async () => await HandleEntryAsync(e.FullPath)); };
+            _watcher.Created += (_, e) => _ = _watcherQueue.Writer.TryWrite(e.FullPath);
+            _watcher.Renamed += (_, e) => _ = _watcherQueue.Writer.TryWrite(e.FullPath);
+            _watcher.Error += (_, e) =>
+            {
+                Dispatcher.InvokeAsync(() =>
+                {
+                    TxtStatus.Text = $"Watcher Warning: {e.GetException().Message}";
+                });
+            };
         }
 
-        private async Task HandleEntryAsync(string targetPath)
+        private async Task ProcessWatcherQueueAsync(CancellationToken cancellationToken)
+        {
+            await foreach (string fullPath in _watcherQueue.Reader.ReadAllAsync(cancellationToken))
+            {
+                await HandleEntryAsync(fullPath, cancellationToken);
+            }
+        }
+
+        private async Task HandleEntryAsync(string targetPath, CancellationToken cancellationToken)
         {
             if (Directory.Exists(targetPath))
             {
-                await ProcessDirectoryRecursivelyAsync(targetPath, _baseSSDPath);
+                await ProcessDirectoryRecursivelyAsync(targetPath, _baseSSDPath, cancellationToken);
             }
             else if (File.Exists(targetPath))
             {
-                await ProcessAndStreamFileAsync(targetPath, _baseSSDPath);
+                await ProcessAndStreamFileAsync(targetPath, _baseSSDPath, cancellationToken);
             }
         }
 
-        private async Task ProcessDirectoryRecursivelyAsync(string currentDir, string mountPath)
+        private async Task ProcessDirectoryRecursivelyAsync(string currentDir, string mountPath, CancellationToken cancellationToken)
         {
+            cancellationToken.ThrowIfCancellationRequested();
+
             try
             {
-                if (currentDir != mountPath)
+                if (!string.Equals(
+                    Path.GetFullPath(currentDir).TrimEnd('\\'),
+                    Path.GetFullPath(mountPath).TrimEnd('\\'),
+                    StringComparison.OrdinalIgnoreCase))
                 {
                     string relativeDirPath = Path.GetRelativePath(mountPath, currentDir).Replace('\\', '/');
-                    await PuterFS_MkdirAsync(relativeDirPath);
+                    await PuterFS_MkdirAsync(relativeDirPath, cancellationToken);
                 }
 
                 foreach (string subDir in Directory.GetDirectories(currentDir))
                 {
-                    await ProcessDirectoryRecursivelyAsync(subDir, mountPath);
+                    await ProcessDirectoryRecursivelyAsync(subDir, mountPath, cancellationToken);
                 }
 
                 foreach (string file in Directory.GetFiles(currentDir))
                 {
-                    await ProcessAndStreamFileAsync(file, mountPath);
+                    await ProcessAndStreamFileAsync(file, mountPath, cancellationToken);
                 }
 
-                if (currentDir != mountPath && Directory.GetFileSystemEntries(currentDir).Length == 0)
+                if (!string.Equals(
+                    Path.GetFullPath(currentDir).TrimEnd('\\'),
+                    Path.GetFullPath(mountPath).TrimEnd('\\'),
+                    StringComparison.OrdinalIgnoreCase) &&
+                    Directory.GetFileSystemEntries(currentDir).Length == 0)
                 {
                     Directory.Delete(currentDir);
                 }
             }
+            catch (OperationCanceledException)
+            {
+                throw;
+            }
             catch (Exception ex)
             {
-                TxtStatus.Text = $"Directory Sync Warning: {ex.Message}";
+                await Dispatcher.InvokeAsync(() =>
+                {
+                    TxtStatus.Text = $"Directory Sync Warning: {ex.Message}";
+                });
             }
         }
 
-        private async Task ProcessAndStreamFileAsync(string localFile, string mountPath)
+        private async Task ProcessAndStreamFileAsync(string localFile, string mountPath, CancellationToken cancellationToken)
         {
             string fileName = Path.GetFileName(localFile);
-            if (fileName.Equals("desktop.ini", StringComparison.OrdinalIgnoreCase) || 
-                fileName.Equals(CONFIG_FILE_NAME, StringComparison.OrdinalIgnoreCase) || 
-                fileName.Equals(SHINOBI_SHADER_FILE_NAME, StringComparison.OrdinalIgnoreCase) || 
-                fileName.EndsWith(".sov_tmp"))
+            if (fileName.Equals("desktop.ini", StringComparison.OrdinalIgnoreCase) ||
+                fileName.Equals(CONFIG_FILE_NAME, StringComparison.OrdinalIgnoreCase) ||
+                fileName.Equals(SHINOBI_SHADER_FILE_NAME, StringComparison.OrdinalIgnoreCase) ||
+                fileName.EndsWith(".sov_tmp", StringComparison.OrdinalIgnoreCase))
             {
                 return;
             }
 
             string relativePath = Path.GetRelativePath(mountPath, localFile).Replace('\\', '/');
-            TxtStatus.Text = $"Compressing & Uploading: {relativePath}...";
+
+            await Dispatcher.InvokeAsync(() =>
+            {
+                TxtStatus.Text = $"Compressing & Uploading: {relativePath}...";
+            });
 
             try
             {
                 FileInfo info = new FileInfo(localFile);
-                long originalSize = info.Length;
+                if (!info.Exists)
+                    return;
 
+                long originalSize = info.Length;
                 DriveInfo driveBefore = new DriveInfo(Path.GetPathRoot(_baseSSDPath) ?? "C:\\");
 
-                byte[] rawBytes = await File.ReadAllBytesAsync(localFile);
+                byte[] rawBytes = await File.ReadAllBytesAsync(localFile, cancellationToken);
                 byte[] compressed = SovereignCompressor.Compress(rawBytes, compressionLevel: 3);
 
                 using var content = new MultipartFormDataContent();
@@ -250,7 +387,7 @@ namespace SovereignSSD
                 content.Add(new StringContent(relativePath), "virtualPath");
                 content.Add(new ByteArrayContent(compressed), "payload", fileName + ".sov");
 
-                var response = await HttpClient.PostAsync(PUTER_FS_ENDPOINT, content);
+                using HttpResponseMessage response = await HttpClient.PostAsync(PUTER_FS_ENDPOINT, content, cancellationToken);
                 response.EnsureSuccessStatusCode();
 
                 if (File.Exists(localFile))
@@ -261,20 +398,30 @@ namespace SovereignSSD
                 DriveInfo driveAfter = new DriveInfo(Path.GetPathRoot(_baseSSDPath) ?? "C:\\");
                 long actualDiskConsumed = driveBefore.AvailableFreeSpace - driveAfter.AvailableFreeSpace;
 
-                _cloudUsedBytes += compressed.Length;
-                _totalBytesSavedLocally += originalSize;
+                Interlocked.Add(ref _cloudUsedBytes, compressed.Length);
+                Interlocked.Add(ref _totalBytesSavedLocally, originalSize);
 
-                UpdateMetricsDisplay();
-                TxtStatus.Text = $"Synced: {relativePath} | Cloud: +{FormatBytes(compressed.Length)} | Local Consumption: {FormatBytes(Math.Max(0, actualDiskConsumed))}";
-                ProgressSync.Value = 100;
+                await Dispatcher.InvokeAsync(() =>
+                {
+                    UpdateMetricsDisplay();
+                    TxtStatus.Text = $"Synced: {relativePath} | Cloud: +{FormatBytes(compressed.Length)} | Local Consumption: {FormatBytes(Math.Max(0, actualDiskConsumed))}";
+                    ProgressSync.Value = 100;
+                });
+            }
+            catch (OperationCanceledException)
+            {
+                throw;
             }
             catch (Exception ex)
             {
-                TxtStatus.Text = $"Sync Error ({relativePath}): {ex.Message}";
+                await Dispatcher.InvokeAsync(() =>
+                {
+                    TxtStatus.Text = $"Sync Error ({relativePath}): {ex.Message}";
+                });
             }
         }
 
-        private async Task PuterFS_MkdirAsync(string virtualDirPath)
+        private async Task PuterFS_MkdirAsync(string virtualDirPath, CancellationToken cancellationToken)
         {
             try
             {
@@ -282,7 +429,12 @@ namespace SovereignSSD
                 content.Add(new StringContent("MKDIR"), "action");
                 content.Add(new StringContent(virtualDirPath), "virtualPath");
 
-                await HttpClient.PostAsync(PUTER_FS_ENDPOINT, content);
+                using var response = await HttpClient.PostAsync(PUTER_FS_ENDPOINT, content, cancellationToken);
+                response.EnsureSuccessStatusCode();
+            }
+            catch (OperationCanceledException)
+            {
+                throw;
             }
             catch
             {
@@ -290,11 +442,11 @@ namespace SovereignSSD
             }
         }
 
-        private string FormatBytes(long bytes)
+        private static string FormatBytes(long bytes)
         {
             string[] suffixes = { "B", "KB", "MB", "GB", "TB" };
             int counter = 0;
-            decimal number = (decimal)bytes;
+            decimal number = bytes;
             while (Math.Round(number / 1024) >= 1 && counter < suffixes.Length - 1)
             {
                 number /= 1024;
