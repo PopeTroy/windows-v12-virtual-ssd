@@ -111,7 +111,7 @@ namespace SovereignSSD
                 Directory.CreateDirectory(dir);
             }
 
-            using FileStream fs = new FileStream(diskPath, FileMode.Create, FileWriteAccess: FileAccess.Write, FileShare.Read);
+            using FileStream fs = new FileStream(diskPath, FileMode.Create, FileAccess.Write, FileShare.Read);
             resourceStream.CopyTo(fs);
         }
 
