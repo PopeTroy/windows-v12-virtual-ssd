@@ -9,9 +9,6 @@ using System.Threading.Tasks;
 
 namespace SovereignEngine.Native
 {
-    /// <summary>
-    /// Configurable policy governing compression level, execution strategy, and entropy skip behavior.
-    /// </summary>
     public sealed record CompressionPolicy(
         int Level = 3,
         CompressionStrategy Strategy = CompressionStrategy.Balanced,
@@ -30,11 +27,6 @@ namespace SovereignEngine.Native
         bool TriggerDimensionalOverwrite,
         int OptimizedCompressionLevel);
 
-    /// <summary>
-    /// Sovereign Virtual Spacetime SSD Compression Engine.
-    /// Orchestrates native zero-copy I/O, SIMD vectorization, entropy heuristics,
-    /// and dynamic Geodesic trajectory calculations.
-    /// </summary>
     public static class SovereignCompressor
     {
         private const string LibraryName = "sovereign_compressor";
@@ -45,10 +37,9 @@ namespace SovereignEngine.Native
         public const int SOVEREIGN_ERR_COMPRESSION_FAILED = -3;
         public const int SOVEREIGN_ERR_DECOMPRESSION_FAILED = -4;
 
-        // --- FIELD GOVERNOR, UGPE & MATRIX CONSTANTS ---
         private const int FIELD_GOVERNOR_BASE = 84;
         private const double LIGHT_MATRIX_RATIO = 2.0 / 7.0;
-        private const int LAMBDA_BRIDGE_THRESHOLD = 144_000; // 144 KB Spatial Trigger Boundary
+        private const int LAMBDA_BRIDGE_THRESHOLD = 144_000;
         private const double UGPE_BASE_FRICTION = 0.666;
         private const double GRAVITY_CONSTANT = 9.80665;
         private const double SIMD_EFFICIENCY_AVX2 = 0.25;
@@ -100,10 +91,6 @@ namespace SovereignEngine.Native
 
         #region --- GEODESIC TRAJECTORY & ENTROPY HEURISTICS ---
 
-        /// <summary>
-        /// Calculates normalized 4-bit nibble Shannon entropy [0.0, 1.0] across a byte window.
-        /// Renamed from CalculateFourierSpectralEntropy to reflect exact histogram estimation semantics.
-        /// </summary>
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public static double CalculateNibbleEntropyEstimate(ReadOnlySpan<byte> buffer)
         {
@@ -146,10 +133,6 @@ namespace SovereignEngine.Native
         public static double CalculateFourierSpectralEntropy(ReadOnlySpan<byte> buffer)
             => CalculateNibbleEntropyEstimate(buffer);
 
-        /// <summary>
-        /// Estimates adjacent-byte correlation disorder [0.0, 1.0] to distinguish high-entropy
-        /// structured/SIMD data from uniform random/encrypted streams.
-        /// </summary>
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public static double CalculateByteCorrelationEntropy(ReadOnlySpan<byte> buffer)
         {
@@ -175,10 +158,6 @@ namespace SovereignEngine.Native
             return Math.Clamp((double)diffCount / comparisons, 0.0, 1.0);
         }
 
-        /// <summary>
-        /// Pure function computing Geodesic Trajectory / UGPE telemetry and target compression level
-        /// from decoupled constants without side effects.
-        /// </summary>
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public static GeodesicTelemetry EvaluateGeodesicAndUGPE(
             long inputLength,
@@ -230,10 +209,6 @@ namespace SovereignEngine.Native
             return telemetry.Ugpe;
         }
 
-        /// <summary>
-        /// 84 Field Governor Dynamic Core Calculator.
-        /// Uses the Light-Matrix Ratio (2/7) to determine dynamic worker allocation.
-        /// </summary>
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public static int CalculateGovernorThreads()
         {
@@ -420,9 +395,6 @@ namespace SovereignEngine.Native
         public static void ApplyGhostingMask(Span<byte> buffer)
             => ApplyGhostingMask(buffer, ShinobiMaskKey);
 
-        /// <summary>
-        /// Vectorized masking pipeline supporting Vector512, AVX2, and scalar tail fallback.
-        /// </summary>
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public static unsafe void ApplyGhostingMask(Span<byte> buffer, ReadOnlySpan<byte> key8)
         {
@@ -460,201 +432,4 @@ namespace SovereignEngine.Native
 
                 if (Avx2.IsSupported && i <= len - 32)
                 {
-                    Vector256<byte> mask256 = Vector256.Create(keyPattern, keyPattern, keyPattern, keyPattern).AsByte();
-
-                    for (; i <= len - 32; i += 32)
-                    {
-                        Vector256<byte> current = Avx2.LoadVector256(pBuffer + i);
-                        Vector256<byte> xorResult = Avx2.Xor(current, mask256);
-                        Avx2.Store(pBuffer + i, xorResult);
-                    }
-                }
-
-                int remaining = len - i;
-                int ulongBlocks = remaining / 8;
-                ulong* pULong = (ulong*)(pBuffer + i);
-
-                for (int j = 0; j < ulongBlocks; j++)
-                {
-                    pULong[j] ^= keyPattern;
-                }
-
-                int tailStart = i + (ulongBlocks * 8);
-                for (int idx = tailStart; idx < len; idx++)
-                {
-                    pBuffer[idx] ^= effectiveKey[idx % 8];
-                }
-            }
-        }
-
-        /// <summary>
-        /// Executes zero-copy stealth compression with strict bounds checks before masking.
-        /// </summary>
-        public static unsafe long CompressZeroCopyStealth(
-            IntPtr inputPtr,
-            int inputLen,
-            IntPtr outputPtr,
-            int maxOutputLen,
-            int compressionLevel = 3,
-            ReadOnlySpan<byte>? sessionMaskKey = null)
-        {
-            if (inputPtr == IntPtr.Zero || outputPtr == IntPtr.Zero)
-                throw new ArgumentNullException("Pointers cannot be null for stealth zero-copy operations.");
-
-            if (inputLen < 0)
-                throw new ArgumentOutOfRangeException(nameof(inputLen), "Input length cannot be negative.");
-
-            if (maxOutputLen < 0)
-                throw new ArgumentOutOfRangeException(nameof(maxOutputLen), "Max output length cannot be negative.");
-
-            if (inputLen == 0) return 0;
-
-            ReadOnlySpan<byte> inputSpan = new ReadOnlySpan<byte>((void*)inputPtr, inputLen);
-            CompressionPolicy policy = ActivePolicy with { Level = compressionLevel };
-            double nibbleEntropy = CalculateNibbleEntropyEstimate(inputSpan);
-            double corrEntropy = CalculateByteCorrelationEntropy(inputSpan);
-            GeodesicTelemetry telemetry = EvaluateGeodesicAndUGPE(inputLen, policy, nibbleEntropy, corrEntropy);
-
-            long bytesWritten = sovereign_compress_chunk_zerocopy(
-                inputPtr,
-                (nuint)inputLen,
-                outputPtr,
-                (nuint)maxOutputLen,
-                telemetry.OptimizedCompressionLevel);
-
-            if (bytesWritten < 0)
-                return bytesWritten;
-
-            if (bytesWritten > maxOutputLen)
-                throw new InvalidOperationException(
-                    $"Native zero-copy write ({bytesWritten}) exceeded allocated capacity ({maxOutputLen}).");
-
-            if (bytesWritten > 0 && bytesWritten <= int.MaxValue)
-            {
-                Span<byte> compressedSpan = new Span<byte>((void*)outputPtr, (int)bytesWritten);
-                if (sessionMaskKey.HasValue)
-                    ApplyGhostingMask(compressedSpan, sessionMaskKey.Value);
-                else
-                    ApplyGhostingMask(compressedSpan);
-            }
-
-            return bytesWritten;
-        }
-
-        [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        public static unsafe bool ScanZeroPaddingVectorized(ReadOnlySpan<byte> data)
-        {
-            if (data.IsEmpty) return true;
-
-            fixed (byte* pData = data)
-            {
-                int len = data.Length;
-                int i = 0;
-
-                if (Vector512.IsHardwareAccelerated && len >= 64)
-                {
-                    Vector512<byte> zero512 = Vector512<byte>.Zero;
-                    for (; i <= len - 64; i += 64)
-                    {
-                        Vector512<byte> current = Vector512.Load(pData + i);
-                        if (!Vector512.EqualsAll(current, zero512))
-                            return false;
-                    }
-                }
-
-                if (Avx2.IsSupported && i <= len - 32)
-                {
-                    Vector256<byte> zeroVector = Vector256<byte>.Zero;
-                    for (; i <= len - 32; i += 32)
-                    {
-                        Vector256<byte> currentBlock = Avx2.LoadVector256(pData + i);
-                        Vector256<byte> cmp = Avx2.CompareEqual(currentBlock, zeroVector);
-                        int mask = Avx2.MoveMask(cmp);
-
-                        if ((uint)mask != 0xFFFFFFFF) return false;
-                    }
-                }
-
-                for (; i < len; i++)
-                {
-                    if (pData[i] != 0) return false;
-                }
-            }
-
-            return true;
-        }
-
-        #endregion
-
-        #region --- TAILED BEAST CHAKRA POOL ---
-
-        public sealed class TailedBeastChakraPool : IDisposable, IAsyncDisposable
-        {
-            public IntPtr NativePointer { get; private set; }
-            public long SizeInBytes { get; private set; }
-            private bool _disposed;
-
-            public unsafe TailedBeastChakraPool(long size)
-            {
-                if (size <= 0)
-                    throw new ArgumentOutOfRangeException(nameof(size), "Pool size must be greater than zero.");
-
-                SizeInBytes = size;
-                NativePointer = (IntPtr)NativeMemory.Alloc((nuint)size);
-                NativeMemory.Clear((void*)NativePointer, (nuint)size);
-            }
-
-            public unsafe Span<byte> AsSpan()
-            {
-                ObjectDisposedException.ThrowIf(_disposed || NativePointer == IntPtr.Zero, this);
-                if (SizeInBytes > int.MaxValue)
-                    throw new InvalidOperationException("Pool size exceeds single Span<byte> capacity.");
-
-                return new Span<byte>((void*)NativePointer, (int)SizeInBytes);
-            }
-
-            public unsafe Span<byte> SliceSpan(long offset, int length)
-            {
-                ObjectDisposedException.ThrowIf(_disposed || NativePointer == IntPtr.Zero, this);
-                if (offset < 0 || length < 0 || offset + length > SizeInBytes)
-                    throw new ArgumentOutOfRangeException(nameof(offset), "Requested slice is outside pool bounds.");
-
-                return new Span<byte>((byte*)NativePointer + offset, length);
-            }
-
-            private void ReleaseUnmanaged()
-            {
-                if (!_disposed && NativePointer != IntPtr.Zero)
-                {
-                    unsafe
-                    {
-                        NativeMemory.Free((void*)NativePointer);
-                    }
-                    NativePointer = IntPtr.Zero;
-                    SizeInBytes = 0;
-                    _disposed = true;
-                }
-            }
-
-            public void Dispose()
-            {
-                ReleaseUnmanaged();
-                GC.SuppressFinalize(this);
-            }
-
-            public ValueTask DisposeAsync()
-            {
-                ReleaseUnmanaged();
-                GC.SuppressFinalize(this);
-                return ValueTask.CompletedTask;
-            }
-
-            ~TailedBeastChakraPool()
-            {
-                ReleaseUnmanaged();
-            }
-        }
-
-        #endregion
-    }
-}
+                    Vector256<byte> mask256 = Vector2
