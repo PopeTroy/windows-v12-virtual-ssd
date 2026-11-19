@@ -1,6 +1,5 @@
 using System;
 using System.Collections.Concurrent;
-using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
 using System.IO.MemoryMappedFiles;
@@ -118,7 +117,7 @@ namespace SovereignSSD.Engine
         private static readonly SemaphoreSlim OverclockSemaphore = new SemaphoreSlim(4, 4);
         private static readonly ConcurrentDictionary<string, byte[]> ShikakuPinningCache = new();
         private static readonly ConcurrentQueue<string> ShikakuKeyOrder = new();
-        private static readonly Lock AuditLock = new Lock();
+        private static readonly object AuditLock = new();
 
         public static async Task ExecuteKuramaOverclockingAsync(Func<Task> heavyIoWorkload)
         {
