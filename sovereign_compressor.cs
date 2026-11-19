@@ -4,12 +4,35 @@ using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 using System.Runtime.Intrinsics;
 using System.Runtime.Intrinsics.X86;
+using System.Security.Cryptography;
+using System.Threading.Tasks;
 
 namespace SovereignEngine.Native
 {
     /// <summary>
+    /// Configurable policy governing compression level, execution strategy, and entropy skip behavior.
+    /// </summary>
+    public sealed record CompressionPolicy(
+        int Level = 3,
+        CompressionStrategy Strategy = CompressionStrategy.Balanced,
+        double SkipThresholdEntropy = 0.95);
+
+    public enum CompressionStrategy
+    {
+        Fast,
+        Balanced,
+        High,
+        Stealth
+    }
+
+    public readonly record struct GeodesicTelemetry(
+        double Ugpe,
+        bool TriggerDimensionalOverwrite,
+        int OptimizedCompressionLevel);
+
+    /// <summary>
     /// Sovereign Virtual Spacetime SSD Compression Engine.
-    /// Orchestrates native zero-copy I/O, SIMD vectorization, Fourier spectral filtering,
+    /// Orchestrates native zero-copy I/O, SIMD vectorization, entropy heuristics,
     /// and dynamic Geodesic trajectory calculations.
     /// </summary>
     public static class SovereignCompressor
@@ -22,61 +45,67 @@ namespace SovereignEngine.Native
         public const int SOVEREIGN_ERR_COMPRESSION_FAILED = -3;
         public const int SOVEREIGN_ERR_DECOMPRESSION_FAILED = -4;
 
-        // --- FIELD GOVERNOR & MATRIX RATIOS ---
+        // --- FIELD GOVERNOR, UGPE & MATRIX CONSTANTS ---
         private const int FIELD_GOVERNOR_BASE = 84;
-        private const double LIGHT_MATRIX_RATIO = 2.0 / 7.0; 
+        private const double LIGHT_MATRIX_RATIO = 2.0 / 7.0;
         private const int LAMBDA_BRIDGE_THRESHOLD = 144_000; // 144 KB Spatial Trigger Boundary
+        private const double UGPE_BASE_FRICTION = 0.666;
+        private const double GRAVITY_CONSTANT = 9.80665;
+        private const double SIMD_EFFICIENCY_AVX2 = 0.25;
+        private const double SIMD_EFFICIENCY_SCALAR = 1.0;
 
         private static readonly byte[] ShinobiMaskKey = new byte[] { 0xDE, 0xAD, 0xBE, 0xEF, 0xFA, 0xCE, 0x01, 0x02 };
+
+        public static CompressionPolicy ActivePolicy { get; set; } = new();
 
         #region --- Native P/Invoke Declarations ---
 
         [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl, EntryPoint = "sovereign_compress_chunk")]
         private static unsafe extern int NativeCompressChunk(
             byte* inputPtr,
-            UIntPtr inputLen,
+            nuint inputLen,
             byte* outPtr,
-            UIntPtr outCap,
-            UIntPtr* outWritten,
+            nuint outCap,
+            out UIntPtr outWritten,
             int compressionLevel
         );
 
         [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl, EntryPoint = "sovereign_decompress_chunk")]
         private static unsafe extern int NativeDecompressChunk(
             byte* inputPtr,
-            UIntPtr inputLen,
+            nuint inputLen,
             byte* outPtr,
-            UIntPtr outCap,
-            UIntPtr* outWritten
+            nuint outCap,
+            out UIntPtr outWritten
         );
 
         [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl, EntryPoint = "sovereign_compress_chunk_zerocopy")]
         public static extern long sovereign_compress_chunk_zerocopy(
             IntPtr inputPtr,
-            UIntPtr inputLen,
+            nuint inputLen,
             IntPtr outputPtr,
-            UIntPtr maxOutputLen,
+            nuint maxOutputLen,
             int compressionLevel
         );
 
         [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl, EntryPoint = "sovereign_hash_stream_parallel")]
         public static extern int sovereign_hash_stream_parallel(
             IntPtr dataPtr,
-            UIntPtr len,
-            UIntPtr chunkSize,
+            nuint len,
+            nuint chunkSize,
             IntPtr outHashesPtr
         );
 
         #endregion
 
-        #region --- GEODESIC TRAJECTORY & FOURIER SPECTRAL MECHANICS ---
+        #region --- GEODESIC TRAJECTORY & ENTROPY HEURISTICS ---
 
         /// <summary>
-        /// Calculates the Brus Quantum Fourier frequency spectral response across a byte memory window.
-        /// Evaluates high-frequency byte distribution entropy to skip compression on non-compressible streams.
+        /// Calculates normalized 4-bit nibble Shannon entropy [0.0, 1.0] across a byte window.
+        /// Renamed from CalculateFourierSpectralEntropy to reflect exact histogram estimation semantics.
         /// </summary>
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        public static unsafe double CalculateFourierSpectralEntropy(ReadOnlySpan<byte> buffer)
+        public static double CalculateNibbleEntropyEstimate(ReadOnlySpan<byte> buffer)
         {
             if (buffer.IsEmpty) return 0.0;
 
@@ -84,72 +113,121 @@ namespace SovereignEngine.Native
             int sampleSize = Math.Min(len, 4096);
             int step = Math.Max(1, len / sampleSize);
 
-            fixed (byte* pBuf = buffer)
+            Span<uint> nibbleBins = stackalloc uint[16];
+            nibbleBins.Clear();
+
+            int sampleCount = 0;
+            for (int idx = 0; idx < len; idx += step)
             {
-                Span<uint> fourierBins = stackalloc uint[16];
-                fourierBins.Clear();
-
-                int sampleCount = 0;
-                for (int idx = 0; idx < len; idx += step)
-                {
-                    byte b = pBuf[idx];
-                    fourierBins[b & 0x0F]++;
-                    sampleCount++;
-                }
-
-                if (sampleCount == 0) return 0.0;
-
-                double entropy = 0.0;
-                double invTotal = 1.0 / sampleCount;
-
-                for (int b = 0; b < 16; b++)
-                {
-                    if (fourierBins[b] > 0)
-                    {
-                        double p = fourierBins[b] * invTotal;
-                        entropy -= p * Math.Log2(p);
-                    }
-                }
-
-                return entropy / 4.0;
+                byte b = buffer[idx];
+                nibbleBins[b & 0x0F]++;
+                sampleCount++;
             }
+
+            if (sampleCount == 0) return 0.0;
+
+            double entropy = 0.0;
+            double invTotal = 1.0 / sampleCount;
+
+            for (int i = 0; i < 16; i++)
+            {
+                if (nibbleBins[i] > 0)
+                {
+                    double p = nibbleBins[i] * invTotal;
+                    entropy -= p * Math.Log2(p);
+                }
+            }
+
+            return Math.Clamp(entropy / 4.0, 0.0, 1.0);
+        }
+
+        [Obsolete("Use CalculateNibbleEntropyEstimate instead.")]
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public static double CalculateFourierSpectralEntropy(ReadOnlySpan<byte> buffer)
+            => CalculateNibbleEntropyEstimate(buffer);
+
+        /// <summary>
+        /// Estimates adjacent-byte correlation disorder [0.0, 1.0] to distinguish high-entropy
+        /// structured/SIMD data from uniform random/encrypted streams.
+        /// </summary>
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public static double CalculateByteCorrelationEntropy(ReadOnlySpan<byte> buffer)
+        {
+            if (buffer.Length < 2) return 0.0;
+
+            int len = buffer.Length;
+            int sampleSize = Math.Min(len - 1, 4096);
+            int step = Math.Max(1, (len - 1) / sampleSize);
+
+            int diffCount = 0;
+            int comparisons = 0;
+
+            for (int i = 0; i < len - 1; i += step)
+            {
+                if (buffer[i] != buffer[i + 1])
+                {
+                    diffCount++;
+                }
+                comparisons++;
+            }
+
+            if (comparisons == 0) return 0.0;
+            return Math.Clamp((double)diffCount / comparisons, 0.0, 1.0);
         }
 
         /// <summary>
-        /// Computes Geodesic Trajectory Acceleration (d^2 x^alpha / d tau^2 = 0)
-        /// and UGPE to determine dimensional overwrite, dynamic leveling, and core thread allocations.
+        /// Pure function computing Geodesic Trajectory / UGPE telemetry and target compression level
+        /// from decoupled constants without side effects.
         /// </summary>
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        private static double CalculateUGPEAndGeodesic(
-            int inputLength, 
-            int requestedLevel, 
-            double spectralEntropy, 
-            out bool triggerDimensionalOverwrite, 
-            out int optimizedCompressionLevel)
+        public static GeodesicTelemetry EvaluateGeodesicAndUGPE(
+            long inputLength,
+            CompressionPolicy? policy,
+            double nibbleEntropy,
+            double correlationEntropy = 0.5)
         {
-            double p = Math.Max(1, requestedLevel);
-            double eta = (1.0 + (p * 0.15)) * (1.1 - spectralEntropy); 
-            double r = Avx2.IsSupported ? 0.25 : 1.0; 
-            double c = inputLength / (double)LAMBDA_BRIDGE_THRESHOLD;
+            CompressionPolicy active = policy ?? ActivePolicy;
+            double levelFactor = Math.Max(1, active.Level);
+            double efficiency = Avx2.IsSupported ? SIMD_EFFICIENCY_AVX2 : SIMD_EFFICIENCY_SCALAR;
+            double bridgeRatio = Math.Max(inputLength / (double)LAMBDA_BRIDGE_THRESHOLD, 0.001);
 
-            double ugpe = (inputLength * p * eta) / (r * Math.Max(c, 0.001));
+            double combinedEntropy = Math.Clamp((nibbleEntropy * 0.7) + (correlationEntropy * 0.3), 0.0, 1.0);
+            double eta = (1.0 + (levelFactor * 0.15)) * Math.Max(0.1, 1.1 - combinedEntropy);
+            double ugpe = (UGPE_BASE_FRICTION * GRAVITY_CONSTANT * inputLength * levelFactor * eta)
+                / (efficiency * bridgeRatio);
 
-            triggerDimensionalOverwrite = inputLength >= LAMBDA_BRIDGE_THRESHOLD || ugpe >= 144000.0;
+            bool triggerOverwrite = inputLength >= LAMBDA_BRIDGE_THRESHOLD || ugpe >= LAMBDA_BRIDGE_THRESHOLD;
 
-            if (spectralEntropy > 0.95)
+            int optimizedLevel;
+            if (combinedEntropy > active.SkipThresholdEntropy)
             {
-                optimizedCompressionLevel = 1;
+                optimizedLevel = 1;
             }
-            else if (triggerDimensionalOverwrite)
+            else if (triggerOverwrite)
             {
-                optimizedCompressionLevel = Math.Min(requestedLevel, 5);
+                optimizedLevel = Math.Min(active.Level, 5);
             }
             else
             {
-                optimizedCompressionLevel = requestedLevel;
+                optimizedLevel = active.Level;
             }
 
-            return ugpe;
+            return new GeodesicTelemetry(ugpe, triggerOverwrite, optimizedLevel);
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        private static double CalculateUGPEAndGeodesic(
+            int inputLength,
+            int requestedLevel,
+            double spectralEntropy,
+            out bool triggerDimensionalOverwrite,
+            out int optimizedCompressionLevel)
+        {
+            CompressionPolicy policy = ActivePolicy with { Level = requestedLevel };
+            GeodesicTelemetry telemetry = EvaluateGeodesicAndUGPE(inputLength, policy, spectralEntropy);
+            triggerDimensionalOverwrite = telemetry.TriggerDimensionalOverwrite;
+            optimizedCompressionLevel = telemetry.OptimizedCompressionLevel;
+            return telemetry.Ugpe;
         }
 
         /// <summary>
@@ -172,14 +250,18 @@ namespace SovereignEngine.Native
         {
             if (input.IsEmpty) return Array.Empty<byte>();
 
-            double spectralEntropy = CalculateFourierSpectralEntropy(input);
-            CalculateUGPEAndGeodesic(input.Length, compressionLevel, spectralEntropy, out _, out int effectiveLevel);
+            CompressionPolicy policy = ActivePolicy with { Level = compressionLevel };
+            double nibbleEntropy = CalculateNibbleEntropyEstimate(input);
+            double corrEntropy = CalculateByteCorrelationEntropy(input);
+            GeodesicTelemetry telemetry = EvaluateGeodesicAndUGPE(input.Length, policy, nibbleEntropy, corrEntropy);
 
             int capacity = input.Length + (input.Length >> 6) + 1024;
-            byte[] rented = ArrayPool<byte>.Shared.Rent(capacity);
+            byte[]? rented = null;
 
             try
             {
+                rented = ArrayPool<byte>.Shared.Rent(capacity);
+
                 fixed (byte* pIn = input)
                 {
                     UIntPtr written = UIntPtr.Zero;
@@ -187,32 +269,57 @@ namespace SovereignEngine.Native
 
                     fixed (byte* pOut = rented)
                     {
-                        res = NativeCompressChunk(pIn, (UIntPtr)input.Length, pOut, (UIntPtr)rented.Length, &written, effectiveLevel);
+                        res = NativeCompressChunk(
+                            pIn,
+                            (nuint)input.Length,
+                            pOut,
+                            (nuint)rented.Length,
+                            out written,
+                            telemetry.OptimizedCompressionLevel);
                     }
 
-                    if (res == SOVEREIGN_ERR_BUFFER_TOO_SMALL)
+                    while (res == SOVEREIGN_ERR_BUFFER_TOO_SMALL)
                     {
-                        ArrayPool<byte>.Shared.Return(rented);
+                        ArrayPool<byte>.Shared.Return(rented, clearArray: false);
+                        rented = null;
+
+                        if (capacity > int.MaxValue / 2)
+                            throw new OutOfMemoryException("Compression output buffer exceeded maximum array size.");
+
                         capacity *= 2;
                         rented = ArrayPool<byte>.Shared.Rent(capacity);
 
                         fixed (byte* pRetry = rented)
                         {
-                            res = NativeCompressChunk(pIn, (UIntPtr)input.Length, pRetry, (UIntPtr)rented.Length, &written, effectiveLevel);
+                            res = NativeCompressChunk(
+                                pIn,
+                                (nuint)input.Length,
+                                pRetry,
+                                (nuint)rented.Length,
+                                out written,
+                                telemetry.OptimizedCompressionLevel);
                         }
                     }
 
-                    if (res != SOVEREIGN_SUCCESS) 
+                    if (res != SOVEREIGN_SUCCESS)
                         throw new ExternalException($"Compression failed with native error code: {res}");
 
-                    byte[] output = new byte[(int)written];
-                    Buffer.BlockCopy(rented, 0, output, 0, (int)written);
+                    nuint writtenCount = (nuint)written;
+                    if (writtenCount > (nuint)rented.Length || writtenCount > int.MaxValue)
+                        throw new InvalidOperationException("Native compressor reported invalid output length.");
+
+                    int outLen = (int)writtenCount;
+                    byte[] output = new byte[outLen];
+                    Buffer.BlockCopy(rented, 0, output, 0, outLen);
                     return output;
                 }
             }
             finally
             {
-                ArrayPool<byte>.Shared.Return(rented);
+                if (rented is not null)
+                {
+                    ArrayPool<byte>.Shared.Return(rented, clearArray: false);
+                }
             }
         }
 
@@ -220,11 +327,16 @@ namespace SovereignEngine.Native
         {
             if (compressedInput.IsEmpty) return Array.Empty<byte>();
 
-            int capacity = expectedUncompressedSize > 0 ? expectedUncompressedSize : Math.Max(compressedInput.Length * 4, 64 * 1024);
-            byte[] rented = ArrayPool<byte>.Shared.Rent(capacity);
+            int capacity = expectedUncompressedSize > 0
+                ? expectedUncompressedSize
+                : Math.Max(compressedInput.Length * 4, 64 * 1024);
+
+            byte[]? rented = null;
 
             try
             {
+                rented = ArrayPool<byte>.Shared.Rent(capacity);
+
                 fixed (byte* pIn = compressedInput)
                 {
                     UIntPtr written = UIntPtr.Zero;
@@ -232,32 +344,55 @@ namespace SovereignEngine.Native
 
                     fixed (byte* pOut = rented)
                     {
-                        res = NativeDecompressChunk(pIn, (UIntPtr)compressedInput.Length, pOut, (UIntPtr)rented.Length, &written);
+                        res = NativeDecompressChunk(
+                            pIn,
+                            (nuint)compressedInput.Length,
+                            pOut,
+                            (nuint)rented.Length,
+                            out written);
                     }
 
                     while (res == SOVEREIGN_ERR_BUFFER_TOO_SMALL)
                     {
-                        ArrayPool<byte>.Shared.Return(rented);
+                        ArrayPool<byte>.Shared.Return(rented, clearArray: false);
+                        rented = null;
+
+                        if (capacity > int.MaxValue / 2)
+                            throw new OutOfMemoryException("Decompression output buffer exceeded maximum array size.");
+
                         capacity *= 2;
                         rented = ArrayPool<byte>.Shared.Rent(capacity);
 
                         fixed (byte* pRetry = rented)
                         {
-                            res = NativeDecompressChunk(pIn, (UIntPtr)compressedInput.Length, pRetry, (UIntPtr)rented.Length, &written);
+                            res = NativeDecompressChunk(
+                                pIn,
+                                (nuint)compressedInput.Length,
+                                pRetry,
+                                (nuint)rented.Length,
+                                out written);
                         }
                     }
 
-                    if (res != SOVEREIGN_SUCCESS) 
+                    if (res != SOVEREIGN_SUCCESS)
                         throw new ExternalException($"Decompression failed with native error code: {res}");
 
-                    byte[] output = new byte[(int)written];
-                    Buffer.BlockCopy(rented, 0, output, 0, (int)written);
+                    nuint writtenCount = (nuint)written;
+                    if (writtenCount > (nuint)rented.Length || writtenCount > int.MaxValue)
+                        throw new InvalidOperationException("Native decompressor reported invalid output length.");
+
+                    int outLen = (int)writtenCount;
+                    byte[] output = new byte[outLen];
+                    Buffer.BlockCopy(rented, 0, output, 0, outLen);
                     return output;
                 }
             }
             finally
             {
-                ArrayPool<byte>.Shared.Return(rented);
+                if (rented is not null)
+                {
+                    ArrayPool<byte>.Shared.Return(rented, clearArray: false);
+                }
             }
         }
 
@@ -265,30 +400,72 @@ namespace SovereignEngine.Native
 
         #region --- Advanced Stealth & SIMD Masking ---
 
+        public static byte[] CreateSessionMaskKey(ReadOnlySpan<byte> keyMaterial)
+        {
+            byte[] sessionKey = new byte[8];
+            byte[] entropy = new byte[8];
+            RandomNumberGenerator.Fill(entropy);
+
+            for (int i = 0; i < 8; i++)
+            {
+                byte baseByte = ShinobiMaskKey[i];
+                byte matByte = keyMaterial.Length > 0 ? keyMaterial[i % keyMaterial.Length] : (byte)0x5A;
+                sessionKey[i] = (byte)(baseByte ^ matByte ^ entropy[i]);
+            }
+
+            return sessionKey;
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public static void ApplyGhostingMask(Span<byte> buffer)
+            => ApplyGhostingMask(buffer, ShinobiMaskKey);
+
         /// <summary>
-        /// Optimized AVX2 Vectorized Masking pipeline.
-        /// Applies 256-bit XOR operations to minimize loop resistance (R -> 0).
+        /// Vectorized masking pipeline supporting Vector512, AVX2, and scalar tail fallback.
         /// </summary>
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        public static unsafe void ApplyGhostingMask(Span<byte> buffer)
+        public static unsafe void ApplyGhostingMask(Span<byte> buffer, ReadOnlySpan<byte> key8)
         {
             if (buffer.IsEmpty) return;
+
+            Span<byte> effectiveKey = stackalloc byte[8];
+            for (int k = 0; k < 8; k++)
+            {
+                effectiveKey[k] = key8.Length > 0 ? key8[k % key8.Length] : ShinobiMaskKey[k];
+            }
+
+            ulong keyPattern;
+            fixed (byte* pKey = effectiveKey)
+            {
+                keyPattern = *(ulong*)pKey;
+            }
 
             fixed (byte* pBuffer = buffer)
             {
                 int len = buffer.Length;
                 int i = 0;
 
-                if (Avx2.IsSupported && len >= 32)
+                if (Vector512.IsHardwareAccelerated && len >= 64)
                 {
-                    ulong keyPattern = 0x0201CEFAEFBEADDE; 
-                    Vector256<ulong> maskVector = Vector256.Create(keyPattern, keyPattern, keyPattern, keyPattern);
-                    Vector256<byte> maskBytes = maskVector.AsByte();
+                    Vector512<ulong> mask512Ulong = Vector512.Create(keyPattern);
+                    Vector512<byte> mask512 = mask512Ulong.AsByte();
+
+                    for (; i <= len - 64; i += 64)
+                    {
+                        Vector512<byte> current = Vector512.Load(pBuffer + i);
+                        Vector512<byte> xored = Vector512.BitwiseXor(current, mask512);
+                        xored.Store(pBuffer + i);
+                    }
+                }
+
+                if (Avx2.IsSupported && i <= len - 32)
+                {
+                    Vector256<byte> mask256 = Vector256.Create(keyPattern, keyPattern, keyPattern, keyPattern).AsByte();
 
                     for (; i <= len - 32; i += 32)
                     {
                         Vector256<byte> current = Avx2.LoadVector256(pBuffer + i);
-                        Vector256<byte> xorResult = Avx2.Xor(current, maskBytes);
+                        Vector256<byte> xorResult = Avx2.Xor(current, mask256);
                         Avx2.Store(pBuffer + i, xorResult);
                     }
                 }
@@ -297,47 +474,68 @@ namespace SovereignEngine.Native
                 int ulongBlocks = remaining / 8;
                 ulong* pULong = (ulong*)(pBuffer + i);
 
-                fixed (byte* pKey = ShinobiMaskKey)
+                for (int j = 0; j < ulongBlocks; j++)
                 {
-                    ulong keyMask = *(ulong*)pKey;
-                    for (int j = 0; j < ulongBlocks; j++)
-                    {
-                        pULong[j] ^= keyMask;
-                    }
+                    pULong[j] ^= keyPattern;
                 }
 
                 int tailStart = i + (ulongBlocks * 8);
-                for (int k = tailStart; k < len; k++)
+                for (int idx = tailStart; idx < len; idx++)
                 {
-                    pBuffer[k] ^= ShinobiMaskKey[k % 8];
+                    pBuffer[idx] ^= effectiveKey[idx % 8];
                 }
             }
         }
 
         /// <summary>
-        /// Executes zero-copy stealth compression with automated dimensional overwrite logic.
+        /// Executes zero-copy stealth compression with strict bounds checks before masking.
         /// </summary>
-        public static unsafe long CompressZeroCopyStealth(IntPtr inputPtr, int inputLen, IntPtr outputPtr, int maxOutputLen, int compressionLevel = 3)
+        public static unsafe long CompressZeroCopyStealth(
+            IntPtr inputPtr,
+            int inputLen,
+            IntPtr outputPtr,
+            int maxOutputLen,
+            int compressionLevel = 3,
+            ReadOnlySpan<byte>? sessionMaskKey = null)
         {
-            if (inputPtr == IntPtr.Zero || outputPtr == IntPtr.Zero) 
+            if (inputPtr == IntPtr.Zero || outputPtr == IntPtr.Zero)
                 throw new ArgumentNullException("Pointers cannot be null for stealth zero-copy operations.");
 
+            if (inputLen < 0)
+                throw new ArgumentOutOfRangeException(nameof(inputLen), "Input length cannot be negative.");
+
+            if (maxOutputLen < 0)
+                throw new ArgumentOutOfRangeException(nameof(maxOutputLen), "Max output length cannot be negative.");
+
+            if (inputLen == 0) return 0;
+
             ReadOnlySpan<byte> inputSpan = new ReadOnlySpan<byte>((void*)inputPtr, inputLen);
-            double entropy = CalculateFourierSpectralEntropy(inputSpan);
-            CalculateUGPEAndGeodesic(inputLen, compressionLevel, entropy, out _, out int effectiveLevel);
+            CompressionPolicy policy = ActivePolicy with { Level = compressionLevel };
+            double nibbleEntropy = CalculateNibbleEntropyEstimate(inputSpan);
+            double corrEntropy = CalculateByteCorrelationEntropy(inputSpan);
+            GeodesicTelemetry telemetry = EvaluateGeodesicAndUGPE(inputLen, policy, nibbleEntropy, corrEntropy);
 
             long bytesWritten = sovereign_compress_chunk_zerocopy(
-                inputPtr, 
-                (UIntPtr)inputLen, 
-                outputPtr, 
-                (UIntPtr)maxOutputLen, 
-                effectiveLevel
-            );
+                inputPtr,
+                (nuint)inputLen,
+                outputPtr,
+                (nuint)maxOutputLen,
+                telemetry.OptimizedCompressionLevel);
 
-            if (bytesWritten > 0)
+            if (bytesWritten < 0)
+                return bytesWritten;
+
+            if (bytesWritten > maxOutputLen)
+                throw new InvalidOperationException(
+                    $"Native zero-copy write ({bytesWritten}) exceeded allocated capacity ({maxOutputLen}).");
+
+            if (bytesWritten > 0 && bytesWritten <= int.MaxValue)
             {
                 Span<byte> compressedSpan = new Span<byte>((void*)outputPtr, (int)bytesWritten);
-                ApplyGhostingMask(compressedSpan);
+                if (sessionMaskKey.HasValue)
+                    ApplyGhostingMask(compressedSpan, sessionMaskKey.Value);
+                else
+                    ApplyGhostingMask(compressedSpan);
             }
 
             return bytesWritten;
@@ -353,7 +551,18 @@ namespace SovereignEngine.Native
                 int len = data.Length;
                 int i = 0;
 
-                if (Avx2.IsSupported && len >= 32)
+                if (Vector512.IsHardwareAccelerated && len >= 64)
+                {
+                    Vector512<byte> zero512 = Vector512<byte>.Zero;
+                    for (; i <= len - 64; i += 64)
+                    {
+                        Vector512<byte> current = Vector512.Load(pData + i);
+                        if (!Vector512.EqualsAll(current, zero512))
+                            return false;
+                    }
+                }
+
+                if (Avx2.IsSupported && i <= len - 32)
                 {
                     Vector256<byte> zeroVector = Vector256<byte>.Zero;
                     for (; i <= len - 32; i += 32)
@@ -379,7 +588,7 @@ namespace SovereignEngine.Native
 
         #region --- TAILED BEAST CHAKRA POOL ---
 
-        public sealed class TailedBeastChakraPool : IDisposable
+        public sealed class TailedBeastChakraPool : IDisposable, IAsyncDisposable
         {
             public IntPtr NativePointer { get; private set; }
             public long SizeInBytes { get; private set; }
@@ -387,7 +596,8 @@ namespace SovereignEngine.Native
 
             public unsafe TailedBeastChakraPool(long size)
             {
-                if (size <= 0) throw new ArgumentOutOfRangeException(nameof(size), "Pool size must be greater than zero.");
+                if (size <= 0)
+                    throw new ArgumentOutOfRangeException(nameof(size), "Pool size must be greater than zero.");
 
                 SizeInBytes = size;
                 NativePointer = (IntPtr)NativeMemory.Alloc((nuint)size);
@@ -396,29 +606,52 @@ namespace SovereignEngine.Native
 
             public unsafe Span<byte> AsSpan()
             {
-                if (_disposed || NativePointer == IntPtr.Zero) 
-                    throw new ObjectDisposedException(nameof(TailedBeastChakraPool));
+                ObjectDisposedException.ThrowIf(_disposed || NativePointer == IntPtr.Zero, this);
+                if (SizeInBytes > int.MaxValue)
+                    throw new InvalidOperationException("Pool size exceeds single Span<byte> capacity.");
 
                 return new Span<byte>((void*)NativePointer, (int)SizeInBytes);
             }
 
-            public void Dispose()
+            public unsafe Span<byte> SliceSpan(long offset, int length)
             {
-                if (!_disposed)
+                ObjectDisposedException.ThrowIf(_disposed || NativePointer == IntPtr.Zero, this);
+                if (offset < 0 || length < 0 || offset + length > SizeInBytes)
+                    throw new ArgumentOutOfRangeException(nameof(offset), "Requested slice is outside pool bounds.");
+
+                return new Span<byte>((byte*)NativePointer + offset, length);
+            }
+
+            private void ReleaseUnmanaged()
+            {
+                if (!_disposed && NativePointer != IntPtr.Zero)
                 {
-                    if (NativePointer != IntPtr.Zero)
+                    unsafe
                     {
-                        unsafe { NativeMemory.Free((void*)NativePointer); }
-                        NativePointer = IntPtr.Zero;
+                        NativeMemory.Free((void*)NativePointer);
                     }
+                    NativePointer = IntPtr.Zero;
+                    SizeInBytes = 0;
                     _disposed = true;
                 }
+            }
+
+            public void Dispose()
+            {
+                ReleaseUnmanaged();
                 GC.SuppressFinalize(this);
+            }
+
+            public ValueTask DisposeAsync()
+            {
+                ReleaseUnmanaged();
+                GC.SuppressFinalize(this);
+                return ValueTask.CompletedTask;
             }
 
             ~TailedBeastChakraPool()
             {
-                Dispose();
+                ReleaseUnmanaged();
             }
         }
 
